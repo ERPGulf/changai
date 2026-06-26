@@ -45,7 +45,6 @@ USER QUESTION
 SCHEMA CONTEXT
 {context}
 
-
 FINAL OUTPUT (MANDATORY FORMAT)
 - Return ONLY one final, valid SQL query.
 - Do NOT repeat the query.
@@ -54,4 +53,4 @@ FINAL OUTPUT (MANDATORY FORMAT)
 - Output must begin directly with SELECT and end with a single semicolon (;).
 - Output only SQL that will execute in MariaDB. No reasoning. No explanation.
 
-If you produce anything besides exactly one SQL statement, it will be considered invalid.
+If you produce anything besides exactly one SQL statement, it will be considered invalid and discarded. 
