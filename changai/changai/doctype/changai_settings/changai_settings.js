@@ -280,25 +280,25 @@ async function check_updates(file_name) {
     });
     const is_stale = r.message?.is_stale;
     const data = r.message?.data;
-    const days = r.message?.days ?? 0;
     const last_sync = r.message?.last_sync;
-    const date = frappe.datetime.str_to_obj(last_sync);
-    const formatted_date = date.toLocaleString();
+    const date = new Date(last_sync);  // no " UTC" suffix
+    const formatted_date = date.toLocaleString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false
+    });
     let badge_class = "badge-yellow";
     let badge_text = "Unknown";
 
 
     if (is_stale === true) {
-        if (days > 1) {
-            badge_class = "badge-yellow";
-            badge_text = `${formatted_date}`
-        }
-        else {
-            badge_class = "badge-green";
-            badge_text = `${formatted_date}`
-        }
-
+        badge_class = "badge-yellow";
+        badge_text = `${formatted_date}`
     }
+
     if (is_stale === false) {
         if (data) {
             badge_class = "badge-green";
@@ -312,7 +312,6 @@ async function check_updates(file_name) {
     return {
         badge_class,
         badge_text,
-        days,
         formatted_date
-    };
+    }
 }

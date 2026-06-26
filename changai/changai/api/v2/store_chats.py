@@ -8,6 +8,7 @@ def save_logs(
     user_question: Optional[str] = None,
     formatted_q: Optional[str] = None,
     context: Optional[str] = None,
+    payload: Optional[dict]=None,
     sql: Optional[str] = None,
     val: Any = None,
     result: Any = None,
@@ -27,6 +28,7 @@ def save_logs(
     MAX_LOG_LEN = 140
     doc = frappe.new_doc("ChangAI Logs")
     doc.user_question = user_question
+    doc.payload = json.dumps(payload) if payload else None
     safe_question=(formatted_q[:137] + "..." if formatted_q and len(formatted_q) > MAX_LOG_LEN else formatted_q or "")
     doc.rewritten_question = safe_question
     doc.schema_retrieved = to_json_if_needed(context)
@@ -194,34 +196,75 @@ USER_PROMPT = """Chat History:
 
 User Question:
 {qstn}"""
-
-def find_similar_log_question(new_question:str, threshold: int = 90):
+def find_similar_log_question(new_question: str, threshold: int = 98):
     logs = frappe.get_all(
         "ChangAI Logs",
-        fields=["name", "user_question", "sql_generated","rewritten_question","fields","tables","error","entity","result","type"],
+        fields=[
+            "name",
+            "user_question",
+            "sql_generated",
+            "rewritten_question",
+            "fields",
+            "tables",
+            "error",
+            "entity",
+            "result",
+            "type",
+            "payload"
+        ],
         limit_page_length=500
     )
+
     best_match = None
     best_score = 0
+
     for log in logs:
-        score = fuzz.token_set_ratio(new_question, log.rewritten_question)
+
+        # Skip Non-ERP
+        if log.type == "NonERP":
+            continue
+
+        # Skip CUD operations
+        if log.payload:
+            continue
+
+        # Skip logs with errors
+        if log.error:
+            continue
+
+        # Skip logs without SQL
+        if not log.sql_generated:
+            continue
+
+        result = frappe.parse_json(log.result or "{}")
+
+        # Skip SQL execution failures
+        if isinstance(result, dict) and result.get("error"):
+            continue
+
+        score = fuzz.token_set_ratio(
+            new_question,
+            log.user_question
+        )
+
         if score > best_score:
             best_score = score
             best_match = log
 
-    if best_score >= threshold:
+    if best_match and best_score >= threshold:
         return {
             "matched": True,
+            "payload": best_match.payload,
             "score": best_score,
             "log_name": best_match.name,
             "question": best_match.user_question,
             "sql": best_match.sql_generated,
-            "rewritten_question":best_match.rewritten_question,
-            "fields":best_match.fields,
-            "tables":best_match.tables,
-            "entity_debug":best_match.entity,
-            "result":best_match.result,
-            "error":best_match.error,
+            "rewritten_question": best_match.rewritten_question,
+            "fields": best_match.fields,
+            "tables": best_match.tables,
+            "entity_debug": best_match.entity,
+            "result": best_match.result,
+            "error": best_match.error,
             "type":best_match.type
         }
 

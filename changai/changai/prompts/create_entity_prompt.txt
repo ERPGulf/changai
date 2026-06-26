@@ -13,6 +13,18 @@ Rules:
 - Return only valid JSON.
 - Do not return explanations or extra text.
 - If no suitable DocType is found, return {{"doctype": ""}}
+- If entity names/values are present in the question (like customer names, supplier names, item codes, project names etc.), extract them into entity_words list.
+- If no entity values are found, return an empty list for entity_words.
 
 Output format:
-{{"doctype": "chosen_doctype_name"}}
+{{
+  "doctype": "chosen_doctype_name",
+  "entity_words": ["value1", "value2"]
+}}
+
+Examples:
+- "Create a new customer John Doe" → {{"doctype": "Customer", "entity_words": ["John Doe"]}}
+- "Add supplier ABC Trading LLC" → {{"doctype": "Supplier", "entity_words": ["ABC Trading LLC"]}}
+- "Create quotation for Customer ABC with item X" → {{"doctype": "Quotation", "entity_words": ["ABC", "X"]}}
+- "Create a new lead" → {{"doctype": "Lead", "entity_words": []}}
+- "Add a new item" → {{"doctype": "Item", "entity_words": []}}

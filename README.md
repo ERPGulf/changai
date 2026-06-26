@@ -59,6 +59,16 @@ Open-source AI assistant for ERPNext. Ask business questions in plain English an
 
 14. **Entity Creation from Natural Language** - changAI allows users to create ERP records directly from natural language requests. Users can create customers, suppliers, items, projects, leads, opportunities, and other ERP entities by simply describing what they need. changAI automatically opens the appropriate ERPNext form with detected values pre-filled, reducing manual data entry and improving productivity.
 
+15. **Natural Language CUD Operations (Create, Update, Delete)** — changAI supports
+    creating,reading, updating, and deleting ERP records directly from natural language requests in English or Arabic. Users can manage customers, suppliers, employees, contacts,and other ERP entities by simply describing what they need.
+
+    Every CRUD operations passes through Frappe's native permission layer before
+    execution. Users can  create,read, update, or delete records they are
+    authorized to access. Unauthorized attempts return a clear error message
+    without modifying any data.
+    All write operations (Create, Update, Delete) are executed exclusively through
+    Frappe ORM and read operations through permission-validated raw SQL.
+
 **You can Enable or Disable ChangAI from "ChangAI Settings Doctype"**
 
 ## Tech Stack

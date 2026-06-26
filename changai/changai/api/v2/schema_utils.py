@@ -210,22 +210,39 @@ def is_doctype_schema_changed(doc, last_sync):
     latest = max(candidates, default=None)
     return bool(latest and last_sync and latest > get_datetime(last_sync))
 
-
-def is_master_data_changed(last_sync):
-    from frappe.utils import get_datetime
-
+def is_master_data_changed(last_sync, stored_data: list):
     for doc in MASTER_DOCTYPES:
-        latest_modified = frappe.db.sql(
-            f"SELECT MAX(modified) FROM `tab{doc}`"
-        )[0][0]
-        if latest_modified and last_sync and get_datetime(latest_modified) > get_datetime(last_sync):
+        meta = frappe.get_meta(doc)
+        title_field = meta.title_field or "name"
+        entity_type = f"tab{doc}"
+
+        # ✅ Only compare rows matching title_field
+        allowed_fields = [f.fieldname for f in meta.fields] + ["name"]
+        if title_field not in allowed_fields:
+            frappe.log_error(f"Invalid title_field: {title_field}", "is_master_data_changed")
+            continue
+
+        live_records = frappe.get_all(
+            doc,
+            fields=[title_field],
+            limit_page_length=0
+        )
+        live_titles = set()
+        for rec in live_records:
+            if rec.get(title_field):
+                live_titles.add(rec.get(title_field))
+
+        if stored_titles != live_titles:
             return True
+
     return False
 
-
 @frappe.whitelist(allow_guest=False)
-def check_file_updates(file_name :str):
+def check_file_updates(file_name: str):
+    RAG_FOLDER = "Home/RAG Sources"
+    from changai.changai.api.v2.build_cards_faiss_index_v2 import _read_file_doc
     settings = frappe.get_single("ChangAI Settings")
+
     if file_name == "master_data.yaml":
         last_sync = settings.last_masterdata_sync
     elif file_name == "schema.yaml":
@@ -241,35 +258,39 @@ def check_file_updates(file_name :str):
             "last_sync": None
         }
 
+    changed = False
+
     if file_name == "schema.yaml":
-        changed = False
         doctypes = frappe.db.get_all("DocType", {"istable": 0}, pluck="name")
         for doc in doctypes:
             if is_doctype_schema_changed(doc, last_sync):
                 changed = True
                 break
 
-
     elif file_name == "master_data.yaml":
-        changed = False
-        if is_master_data_changed(last_sync):
+        raw_content = _read_file_doc("master_data.yaml", RAG_FOLDER)
+
+        # ✅ Extract data list from content
+        if isinstance(raw_content, dict):
+            stored_data = raw_content.get("data", [])
+        elif isinstance(raw_content, str):
+            import yaml
+            parsed = yaml.safe_load(raw_content)
+            stored_data = parsed.get("data", []) if isinstance(parsed, dict) else []
+        else:
+            stored_data = []
+
+        if is_master_data_changed(last_sync, stored_data):
             changed = True
 
     days = days_diff(today(), getdate(last_sync))
-    if changed == True:
-        return {
-            "is_stale": True,
-            "data": True,
-            "days": days,
-            "last_sync": last_sync
-        }
-    else:
-        return {
-            "is_stale":False,
-            "data": True,
-            "days": days,
-            "last_sync": last_sync
-        }
+
+    return {
+        "is_stale": changed,
+        "data": True,
+        "days": days,
+        "last_sync": last_sync
+    }
 
 
 @frappe.whitelist()

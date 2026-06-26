@@ -184,7 +184,6 @@ def _build_field_page_content(table_name: str, field_name: str, field_desc: str,
         page_content += f"\n{options}"
     return page_content
 
-
 def _build_field_document(table_name: str, module: str, field_row: Dict[str, Any]) -> Optional[Document]:
     if not isinstance(field_row, dict):
         return None
@@ -195,23 +194,41 @@ def _build_field_document(table_name: str, module: str, field_row: Dict[str, Any
 
     field_desc = field_row.get("description", "") or ""
     join_hint = field_row.get("join_hint") or ""
+    child_hint = field_row.get("child_hint") or ""      # ✅ Add this
     options = field_row.get("options") or ""
+    fieldtype = field_row.get("fieldtype") or ""        # ✅ Add this
+    is_table_field = fieldtype in ("Table", "Table MultiSelect")  # ✅ Add this
+
+    # Build page content
+    page_content = f"[FIELD] {field_name} | [TABLE] {table_name}\n{field_desc}"
+    if join_hint:
+        page_content += f"\n{join_hint}"
+    if child_hint and is_table_field:                   # ✅ Add child hint to content
+        if isinstance(child_hint, dict):
+            page_content += f"\nChild Table: {child_hint.get('child_table', '')}"
+        else:
+            page_content += f"\n{child_hint}"
+    if options:
+        page_content += f"\n{options}"
+
+    # Build metadata
+    metadata = {
+        "type": "field",
+        "table": table_name,
+        "field": field_name,
+        "fieldtype": fieldtype,                         # ✅ Store fieldtype
+        "module": module,
+    }
+    if options:
+        metadata["options"] = options
+    if join_hint:
+        metadata["join_hint"] = join_hint
+    if child_hint and is_table_field:                   # ✅ Store child_hint
+        metadata["child_hint"] = child_hint
 
     return Document(
-        page_content=_build_field_page_content(
-            table_name=table_name,
-            field_name=field_name,
-            field_desc=field_desc,
-            join_hint=join_hint,
-            options=options,
-        ),
-        metadata=_build_field_metadata(
-            table_name=table_name,
-            field_name=field_name,
-            module=module,
-            join_hint=join_hint,
-            options=options,
-        ),
+        page_content=page_content,
+        metadata=metadata,
     )
 GENERIC_FIELDS = {
     'creation', 'modified', 'owner', 'parenttype','old_parent',
@@ -441,7 +458,6 @@ def build_schema_fvs_job():
         # schema = clean_schema(schema,schema_path)
         schema_docs = build_schema_docs(schema)
         app_base, _, _, schema_path, _,schema_emb_dir, _ = _get_fvs_paths()
-        # clean_schema(schema_path,schema_path)
         _build_and_save_faiss(schema_docs, schema_path, "ERPNext Schema FVS", app_base)
         save_field_matrix(schema_docs, schema_emb_dir)
         frappe.logger().info(f"ERPNext Schema FVS built: {len(schema_docs)} docs")
