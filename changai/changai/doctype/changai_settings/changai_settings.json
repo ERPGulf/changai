@@ -5,13 +5,14 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "server_section",
+  "section_break_ubdl",
   "enable_changai",
+  "gemini_authentication_free_tier",
+  "gemini_api_key",
+  "server_section",
   "remote",
   "from_language",
   "to_language",
-  "gemini_authentication_free_tier_section",
-  "gemini_api_key",
   "models_section",
   "embedder",
   "qwen3_4b_instruct",
@@ -32,6 +33,8 @@
   "result_formatting",
   "remote_server_tab",
   "replicate_section",
+  "column_break_enbc",
+  "column_break_nomz",
   "prediction_url",
   "deploy_url",
   "llm_version_id",
@@ -302,11 +305,6 @@
    "options": "Language"
   },
   {
-   "fieldname": "gemini_authentication_free_tier_section",
-   "fieldtype": "Section Break",
-   "label": "Gemini Authentication (Free Tier)"
-  },
-  {
    "fieldname": "section_break_qwlc",
    "fieldtype": "Section Break",
    "label": "Voice & Speech Settings"
@@ -386,13 +384,30 @@
    "fieldname": "enable_changai",
    "fieldtype": "Check",
    "label": "Enable changAI"
+  },
+  {
+   "fieldname": "section_break_ubdl",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "column_break_enbc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_nomz",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "gemini_authentication_free_tier",
+   "fieldtype": "Section Break",
+   "label": "Gemini Authentication (Free Tier)"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-05-21 16:38:55.838611",
+ "modified": "2026-06-15 07:18:36.158706",
  "modified_by": "Administrator",
  "module": "Changai",
  "name": "ChangAI Settings",

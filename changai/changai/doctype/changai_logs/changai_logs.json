@@ -6,19 +6,22 @@
  "engine": "InnoDB",
  "field_order": [
   "user_question",
-  "rewritten_question",
   "schema_retrieved",
+  "payload",
+  "formatted_result",
+  "column_break_gzja",
+  "rewritten_question",
   "sql_generated",
   "result",
-  "formatted_result",
   "validation_and_error_section",
   "error",
-  "validation",
   "tries",
+  "type",
+  "validation",
+  "column_break_dbio",
   "fields",
   "tables",
-  "entity",
-  "type"
+  "entity"
  ],
  "fields": [
   {
@@ -91,12 +94,25 @@
    "fieldtype": "Select",
    "label": "Type",
    "options": "ERP\nNonERP"
+  },
+  {
+   "fieldname": "payload",
+   "fieldtype": "Long Text",
+   "label": "Payload for Create,update,delete"
+  },
+  {
+   "fieldname": "column_break_gzja",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_dbio",
+   "fieldtype": "Column Break"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-06-04 12:40:18.522183",
+ "modified": "2026-06-17 13:36:19.283794",
  "modified_by": "Administrator",
  "module": "Changai",
  "name": "ChangAI Logs",

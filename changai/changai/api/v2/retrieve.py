@@ -395,8 +395,9 @@ def _get_cached_embedding(q: str, request_id: str) -> tuple:
 
 
 
-def call_fvs_table_search(get_table: bool, q: str, request_id: str) -> List[str]:
+def call_fvs_table_search(is_cud,get_table: bool, q: str, request_id: str) -> List[str]:
     # get cached embedding
+    top_k=0
     publish_pipeline_update(
             request_id,
             "Inside the Table Search Function",
@@ -421,7 +422,8 @@ def call_fvs_table_search(get_table: bool, q: str, request_id: str) -> List[str]
             "vs_ready",
             _("vs_ready")
         )
-    scores, indices = vs.index.search(q_vec.reshape(1, -1), k=20)
+    top_k=30 if is_cud else 20
+    scores, indices = vs.index.search(q_vec.reshape(1, -1), k=top_k)
     publish_pipeline_update(
             request_id,
             "index_search_done",
@@ -440,9 +442,20 @@ def call_fvs_table_search(get_table: bool, q: str, request_id: str) -> List[str]
             out.append(t)
     return out
 
-
+SKIP_FIELDS = {
+    "docstatus",
+    "owner",
+    "creation",
+    "modified",
+    "modified_by",
+    "parent",
+    "parenttype",
+    "parentfield",
+    "idx",
+}
 
 def call_fvs_field_search_global_k(
+    is_cud:bool,
     user_question: str,
     selected_tables: List[str],
     k_total: int = 40,
@@ -462,22 +475,18 @@ def call_fvs_field_search_global_k(
         _get_cached_embedding(user_question, request_id),
         dtype="float32"
     )
-
     q_vec = q_vec / max(np.linalg.norm(q_vec), 1e-12)
 
     all_idxs = []
-
     for t in selected_tables:
         t = str(t).strip()
         if not t:
             continue
-
         candidates = [
             t,
             f"tab{t}" if not t.startswith("tab") else t,
             t.replace("tab", "", 1) if t.startswith("tab") else t,
         ]
-
         for key in candidates:
             if key in table_to_idx:
                 all_idxs.extend(table_to_idx[key])
@@ -496,7 +505,6 @@ def call_fvs_field_search_global_k(
 
     sub_embs = embs[all_idxs]
     scores = sub_embs @ q_vec
-
     top_global = np.argsort(-scores)[:k_total]
 
     grouped = {}
@@ -505,7 +513,6 @@ def call_fvs_field_search_global_k(
     for i in top_global:
         doc_i = all_idxs[int(i)]
         d = docs[doc_i]
-
         meta = getattr(d, "metadata", {}) or {}
 
         is_table = meta.get("is_table")
@@ -514,15 +521,19 @@ def call_fvs_field_search_global_k(
 
         if not table or not field:
             continue
+        if is_cud:
+            if field in SKIP_FIELDS:
+                continue
 
         key = (table, field)
         if key in seen:
             continue
-
         seen.add(key)
 
         name = field
+        fieldtype = meta.get("fieldtype", "")
 
+        # ─── Link field → join hint ────────────────────────
         join_hint = meta.get("join_hint")
         if isinstance(join_hint, dict):
             linked_table = join_hint.get("table")
@@ -531,8 +542,19 @@ def call_fvs_field_search_global_k(
         elif isinstance(join_hint, str) and join_hint.strip():
             name += f" -> {join_hint.strip()}"
 
+        # ─── Table field → child hint ──────────────────────
+        elif fieldtype in ("Table", "Table MultiSelect"):
+            child_hint = meta.get("child_hint")
+            if isinstance(child_hint, dict):
+                child_table = child_hint.get("child_table")
+                if child_table:
+                    name += f" (Table) -> {child_table}"
+            elif isinstance(child_hint, str) and child_hint.strip():
+                name += f" (Table) -> {child_hint.strip()}"
+
+        # ─── Select field → options ────────────────────────
         opts = meta.get("options")
-        if opts:
+        if opts and fieldtype == "Select":
             if isinstance(opts, list):
                 name += " {" + ", ".join(str(o) for o in opts[:5]) + "}"
             else:
@@ -542,7 +564,6 @@ def call_fvs_field_search_global_k(
             "is_table": is_table,
             "fields": []
         })
-
         grouped[table]["fields"].append(name)
 
     if not grouped:
@@ -556,20 +577,22 @@ def call_fvs_field_search_global_k(
             }, indent=2, default=str)
         )
         return ""
+
     return format_schema_context(grouped)
 
-def call_retrieve_multi_line(user_question: str, request_id: str) -> Dict[str, Any]:
+def call_retrieve_multi_line(is_cud:bool,user_question: str, request_id: str) -> Dict[str, Any]:
     try:
-        top_tables = call_fvs_table_search(True, user_question, request_id)
+        top_tables = call_fvs_table_search(is_cud,True, user_question, request_id)
         publish_pipeline_update(
             request_id,
             "table_retrieval_done",
             _("Tables retrieved")
         )
-        fields_candidates= call_fvs_field_search_global_k(
+        fields_candidates = call_fvs_field_search_global_k(
+            is_cud,
             user_question,
             selected_tables=top_tables,
-            k_total=40,
+            k_total= 60 if is_cud else 40,
             request_id=request_id
         )
         publish_pipeline_update(
@@ -586,7 +609,7 @@ def call_retrieve_multi_line(user_question: str, request_id: str) -> Dict[str, A
     except frappe.exceptions.ValidationError:
         raise
     except Exception as e:
-        return {"selected_fields": {}, "selected_tables": [], "top_tables": [], "error": str(e)}
+        return {"selected_fields": {}, "selected_tables": [], "top_tables": [],"top_fields": [],"error": str(e)}
 
 def debug_entity_retriever(q: str,state:Dict):
     resp = remote_entity_embedder(q)   # this returns {"ok":..., "body":...}

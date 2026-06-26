@@ -49,7 +49,7 @@ def create_helpdesk_ticket(subject:str,user:str,email:str,priority:str ="Low", t
             json.dumps(
                 {
             "message": {
-                "kind": "TICKET_CREATED",
+                "kind": "TICKET_CREATION_FAILED",
                 "data": {
                     "error": str(e)
                 }
@@ -171,7 +171,9 @@ def support_bot(message: str) -> Dict[str, Any]:
 
     if task_flag == "GET_USER_TICKETS":
         response = get_user_tickets()
-        return json.loads(response.get_data(as_text=True))      # ✅ unwrap Response → dict
+        return json.loads(response.get_data(as_text=True))  
+    if task_flag == "TICKET_CREATION_FAILED":
+        return {"kind":"TICKET_CREATION_FAILED","message":"Something went wrong. Please try again."}
 
     return {"kind": "UNKNOWN", "message": "Please describe the issue or provide a ticket number."}
 

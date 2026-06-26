@@ -80,10 +80,26 @@ SYSTEM_FIELDS = [
     {"fieldname": "idx", "fieldtype": "Int", "label": "Row Index"},
 ]
 EXCLUDED_FIELDTYPES: Set[str] = {
-    "Section Break", "Column Break", "Tab Break", "Page Break", "Table Break",
-    "Fold", "Heading", "HTML", "Button", "Attach Image", "Image", "Signature", "Icon","Table"
+    # Layout / Structure — no data value
+    "Section Break",
+    "Column Break",
+    "Tab Break",
+    "Fold",
+    "Heading",
+    "HTML",
+    "HTML Editor",
+    "Markdown Editor",
+    "Read Only",
+    "Image",
+    "Icon",
+    "Button",
+    "Attach",
+    "Attach Image",
+    "Signature",
+    "Geolocation",
+    "Barcode",
+    "Color",
 }
-
 
 def _get_file_doc_by_name(file_name: str, folder: str = RAG_FOLDER) -> Optional["frappe.model.document.Document"]:
     file_id = frappe.db.get_value("File", {"file_name": file_name, "folder": folder}, "name")
@@ -152,7 +168,13 @@ def _strip_tab(t: str) -> str:
     t = (t or "").strip()
     return t[3:] if t.startswith("tab") else t
 
-MODULES_TO_SYNC = ["Customer", "Item", "Currency", "Supplier"]
+MODULES_TO_SYNC = [ 
+    "Customer",
+    "Supplier",
+    "Item",
+    "Warehouse",
+    "Company",
+    "Account"]
 
 
 def _normalize_master_data_payload(payload: Any) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
@@ -289,6 +311,7 @@ def sync_master_data_smart() -> Dict[str, Any]:
         "fvs_error": None,
     }
 
+
 def _clean_schema_fields(by_table: Dict[str, Dict[str, Any]]) -> None:
     for block in by_table.values():
         for field in block.get("fields", []) or []:
@@ -298,6 +321,9 @@ def _clean_schema_fields(by_table: Dict[str, Dict[str, Any]]) -> None:
                 field.pop("options", None)
             if field.get("fieldtype") != "Link":
                 field.pop("join_hint", None)
+            # ✅ Add this — preserve child_hint only for Table fields
+            if field.get("fieldtype") not in ("Table", "Table MultiSelect"):
+                field.pop("child_hint", None)
 
 
 def get_doctypes_changed_since(last_sync: Optional[str]) -> List[str]:
@@ -439,7 +465,6 @@ def _update_or_create_table_block(
         "fields": fields,
         "desc_done": False,
     }
-
 def _build_field_entry(
     field_meta: Any,
     existing_fields: Dict[str, Dict[str, Any]],
@@ -455,30 +480,49 @@ def _build_field_entry(
         fieldtype = getattr(field_meta, "fieldtype", "Data")
         label = getattr(field_meta, "label", None) or fieldname
         options = getattr(field_meta, "options", None)
+
     if not fieldname:
         return None
+
     existing = existing_fields.get(fieldname) or {}
     description = existing.get("description") or ""
+
     entry = {
         "name": fieldname,
         "fieldtype": fieldtype,
         "label": label,
         "description": description,
     }
+
     if fieldtype == "Select" and options:
         entry["options"] = _merge_select_options(
             options,
             existing.get("options", []),
         )
+
     elif fieldtype == "Link" and options:
         entry["join_hint"] = {
             "table": f"tab{options}",
             "on": f"{fieldname} = tab{options}.name"
         }
+
+    elif fieldtype in ("Table", "Table MultiSelect") and options:
+        entry["child_hint"] = {
+            "child_table": f"tab{options}",
+            "fieldname": fieldname,
+            "join_rules": {
+                "parent": "parent document name",
+                "parenttype": "parent DocType",
+                "parentfield": fieldname
+            }
+        }
     if fieldtype != "Select":
         entry.pop("options", None)
     if fieldtype != "Link":
         entry.pop("join_hint", None)
+    if fieldtype not in ("Table", "Table MultiSelect"):
+        entry.pop("child_hint", None)
+
     return entry
 
 
