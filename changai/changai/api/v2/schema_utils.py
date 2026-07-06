@@ -264,7 +264,7 @@ def is_master_data_changed(last_sync: str, stored_data: list):
             return True
     return False
 
-
+@frappe.whitelist(allow_guest=True)
 def check_file_updates(file_name: str):
     RAG_FOLDER = "Home/RAG Sources"
     from changai.changai.api.v2.build_cards_faiss_index_v2 import _read_file_doc
