@@ -125,5 +125,5 @@ def translate_and_store(docname: str, doctype: str, from_field: str, to_field: s
     if not hasattr(doc, to_field):
         frappe.throw(f"Field '{to_field}' does not exist on Item")
     doc.set(to_field, translated_text)
-    doc.save(ignore_permissions=True)
+    doc.save(ignore_permissions=False)
     return to_field

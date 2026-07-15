@@ -542,7 +542,7 @@ class ChangAIConfig:
     def get(cls):
         if not hasattr(frappe.local, "_changai_config"):
             frappe.clear_document_cache(CHANGAI_SETTINGS)
-            frappe.local._changai_config = get_settings()
+            frappe.local._changai_config = _get_internal_settings_config()
         return frappe.local._changai_config
 
 
@@ -555,21 +555,7 @@ def _build_frontend_settings_config() -> Dict[str, Any]:
         or getattr(settings, "aws_default_region", None)
         or "us-east-1"
     )
-
     return {
-        "RETAIN_MEM": settings.retain_memory,
-        "LLM_VERSION_ID": settings.llm_version_id,
-        "EMBED_VERSION_ID": settings.embedder_version_id,
-        "REMOTE": bool(settings.remote),
-        "deploy_url": settings.deploy_url,
-        "entity_retriever": settings.entity_retriever,
-        "support_api_url": settings.support_url,
-        "get_ticket_details_url": settings.get_ticket_details_url,
-        "llm": settings.llm,
-        "location": settings.gemini_location,
-        "retriever_structure": settings.retriever_structure,
-        "gemini_project_id": settings.gemini_project_id,
-        "gemini_json_content": settings.gemini_json_content,
         "enable_voice_chat": bool(settings.enable_voice_chat),
         "aws_region": aws_region,
         "polly_voice_id": "Zayd",
@@ -578,8 +564,7 @@ def _build_frontend_settings_config() -> Dict[str, Any]:
     }
 
 
-@frappe.whitelist(allow_guest=False)
-def get_settings() -> Dict[str, Any]:
+def _get_internal_settings_config() -> Dict[str, Any]:
     settings = frappe.get_single(CHANGAI_SETTINGS)
     config = {
         "RETAIN_MEM": settings.retain_memory,
@@ -602,9 +587,14 @@ def get_settings() -> Dict[str, Any]:
     }
     return config
 
+@frappe.whitelist(allow_guest=False)
+def get_settings() -> Dict[str, Any]:
+    frappe.has_permission(CHANGAI_SETTINGS, "read", throw=True)
+    return _get_internal_settings_config()
 
 @frappe.whitelist(allow_guest=False)
 def get_frontend_settings() -> Dict[str, Any]:
+    frappe.has_permission(CHANGAI_SETTINGS, "read", throw=True)
     return _build_frontend_settings_config()
 
 def clean_sql(s: Any) -> str:
