@@ -13,9 +13,8 @@ import spacy
 import jinja2
 from typing import Any, Dict, Optional
 from symspellpy.symspellpy import SymSpell, Verbosity
-from changai.changai.api.v2.text2sql_pipeline import get_settings
+# from changai.changai.api.v2.text2sql_pipeline import get_settings
 
-CONFIG=get_settings()
 pleasantry_file_path = frappe.get_app_path("changai", "changai", "api", "pleasantry.json")
 business_keywords_file = frappe.get_app_path("changai", "changai", "api", "business_keywords.json")
 custom_dictionary = frappe.get_app_path("changai", "changai", "api", "erp_dictionary.txt")

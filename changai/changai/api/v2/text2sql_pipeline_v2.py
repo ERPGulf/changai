@@ -77,6 +77,7 @@ BUSINESS_KEYWORDS = bk.get("business_keywords", bk)
 mapping_data = read_asset("metaschema_clean_v2.json", base="assets")
 CONVERSATION_TEMPLATE = read_asset("conversation_template_v2.j2", base="assets")
 SQL_SYS_PROMPT = read_asset("sql_system_prompt.txt", base="prompts")
+GDOC_SYS_PROMPT = read_asset("gdoc_sql_prompt.txt", base="prompts")
 SQL_PROMPT = read_asset("sql_user_prompt.txt", base="prompts")
 FILTER_TABLES = read_asset("filter_tables.txt", base="prompts")
 filter_fields = read_asset("filter_fields.txt", base="prompts")
@@ -226,6 +227,8 @@ def _safe_strip(v):
 
 # Shared State
 class SQLState(TypedDict, total=False):
+    table : str
+    source :str
     payload_res :dict
     is_cud:bool
     cud_type:str
@@ -237,6 +240,7 @@ class SQLState(TypedDict, total=False):
     report_name:str
     entity_name:str
     doc:str
+    clarification:str
     reports_filter_before_call:list
     entity_type:str
     final_prompt:str
@@ -268,7 +272,44 @@ class SQLState(TypedDict, total=False):
     message:str
     stop_followup:bool
 
-
+TURN_RESET: SQLState = {
+    "clarification": "",
+    "sql": "",
+    "orm": "",
+    "payload": {},
+    "payload_res": None,
+    "error": None,
+    "validation": {},
+    "tries": 0,
+    "sql_prompt": "",
+    "final_prompt": "",
+    "formatted_q": "",
+    "non_erp_res": "",
+    "message": "",
+    "stop_followup": False,
+    "create_entity": False,
+    "open_report": False,
+    "report_name": "",
+    "filters": "",
+    "doc": "",
+    "entity_name": "",
+    "is_cud": False,
+    "cud_type": "",
+    "entity_cards": [],
+    "entity_words": [],
+    "contains_values": False,
+    "selected_tables": [],
+    "selected_fields": "",
+    "query_type":"",
+    "top_tables": [],
+    "top_fields": {},
+    "hits": [],
+    "context": "",
+    "entity_raw":None,
+    "question":"",
+    "formatting_prompt":"",
+    "session_id":""
+}
 def route_action(state: SQLState) -> str:
     if state.get("stop_followup"):
         return "STOP_FOLLOW"
@@ -322,9 +363,12 @@ def guardrail_router(state: SQLState) -> SQLState:
     request_id = state.get("request_id")
     chat_id = state.get("session_id")
     raw_q = state.get("question") or ""
+    source = state.get("source")
     try:
-        is_erp= is_erp_query(False,raw_q,BUSINESS_KEYWORDS,98)
-        if is_erp:
+        is_erp= is_erp_query(False,raw_q,BUSINESS_KEYWORDS,95)
+        if source == "gdoc":
+            query_type = "ERP"
+        elif is_erp :
             query_type = "ERP"
         elif is_thread_erp(raw_q, chat_id):
             query_type = "ERP"
@@ -623,6 +667,7 @@ def generate_sql(state:SQLState) -> SQLState:
     # if state.get("context") == "" or state.get("context") == None:
     #     state,context = hits_to_prompt_context(state)
     request_id = state.get("request_id")
+    source = state.get("source")
     fields = _safe_strip(state.get("selected_fields") or "")
     entity_cards = state.get("entity_cards") or []
     entity_block = ""
@@ -639,7 +684,7 @@ def generate_sql(state:SQLState) -> SQLState:
     else:
         prompt=fill_sql_prompt(formatted_q,state["context"])
     try:
-        response=call_model(prompt,"llm",SQL_SYS_PROMPT)
+        response=call_model(prompt,"llm",SQL_SYS_PROMPT if source == "erp" else GDOC_SYS_PROMPT)
         if not response:
             return {**state, "error": "Empty response from LLM", "sql_prompt": prompt}
         if isinstance(response, str):
@@ -651,13 +696,20 @@ def generate_sql(state:SQLState) -> SQLState:
                     "error": "Invalid JSON returned by LLM"
                 }
         sql = response.get("sql", "")
+        table = response.get("table", "")
+        clarification = response.get("clarification") or None
+        if clarification:
+            publish_pipeline_update(request_id, "clarification_needed", clarification)
+            return {**state, "sql_prompt": prompt, "sql": "", "payload": {},
+                    "payload_res": None, "error": None,
+                    "clarification": clarification}
         payload = response.get("payload", {})
         publish_pipeline_update(
             request_id,
             "sql_generated",
             "SQL generated"
         )
-        return {**state,"sql_prompt":prompt,"sql":sql,"payload":payload,"error":None,"payload_res": None}
+        return {**state,"sql_prompt":prompt,"sql":sql,"payload":payload,"error":None,"payload_res": None,"table":table}
     except frappe.exceptions.ValidationError:
         raise
     except Exception as e:
@@ -711,7 +763,8 @@ def repair_sqlquery(state: SQLState) -> SQLState:
     patched_prompt =sql_prompt + "\n\n#VALIDATION HINTS\n" + "\n".join(f"-{h}" for h in hints)
 
     try:
-        response = call_model(patched_prompt,"llm",SQL_SYS_PROMPT)
+        sys_prompt = GDOC_SYS_PROMPT if state.get("source") == "gdoc" else SQL_SYS_PROMPT
+        response = call_model(patched_prompt,"llm",sys_prompt)
         if isinstance(response, str):
             try:
                 response = json.loads(response)
@@ -941,8 +994,10 @@ def execute_query(sql: str, doctypes: List[str]) -> Any:
         return {"error": f"SQL Execution Failed: {e}\n Check Quick Start Guide Here 👇:\n {CHANGAI_GUIDE_LINK}"}
 
 
-def _invoke_pipeline(user_question: str, chat_id: str, request_id: str,sendNonErptoAI: bool = False):
+def _invoke_pipeline(source:str,user_question: str, chat_id: str, request_id: str,sendNonErptoAI: bool = False):
     initial_state: SQLState = {
+        **TURN_RESET,
+        "source":source,
         "question": user_question or "",
         "session_id": chat_id,
         "request_id": request_id,
@@ -1011,16 +1066,58 @@ def _handle_sql_result(
     extracted_tables=[]
     formatted_result =""
     payload = {}
+    source =""
+    source=final.get("source")
+    context = (final.get("context") or final.get("selected_fields") or fields or "")[:800]
+    clarification = final.get("clarification") or ""
+    if clarification:
+        publish_pipeline_update(
+            request_id,
+            "clarification_needed",
+            "Need clarification from user",
+            done=True          # close the pipeline UI on this turn
+        )
+        save_turn_2(
+            session_id=chat_id,
+            user_text=formatted_q,
+            bot_text=clarification,
+            type_="erp"
+        )
+        return {
+            "Model returned SQL": "",
+            "context": context,
+            "payload": payload,
+            "entity_words": final.get("entity_words") or [],
+            "Question": user_question,
+            "payload_res": None,
+            "Formated Question": formatted_q,
+            "Cleaned SQL": "",
+            "Tables": selected_tables,
+            "Fields": fields,
+            "Entity Values present ?": "",
+            "Validation": val,
+            "Error": None,
+            "result": [],
+            "EntityDebug": entity_debug if entity_debug.get("contains_values") else None,
+            "Bot": clarification
+        }
     try:
         request_id = request_id or final.get("request_id")
         org_sql = final.get("sql") or sql
         payload = final.get("payload") or {}
         payload_res = final.get("payload_res")
+        table = final.get("table")
         if org_sql:
             extracted_tables = extract_tables_from_sql(org_sql)
         try:
             if sql:
                 sql_result = execute_query(sql, extracted_tables)
+                if source == "gdoc":
+                    return {
+                        "sql_out":sql_result,
+                        "table":table
+                    }
+
         except Exception as e:
             # err = str(e)
             final["error"] = str(e)
@@ -1029,7 +1126,6 @@ def _handle_sql_result(
     except Exception as e:
         final["error"] = str(e)
         return {"ok": False, "error": f"SQL Execution Failed: {e}"}
-    context = (final.get("context") or final.get("selected_fields") or fields or "")[:800]
     contains_values = final.get("contains_values") or entity_debug.get("contains_values") or ""
     err = final.get("error")
 
@@ -1091,7 +1187,7 @@ def _handle_sql_result(
 
         # ✅ Normal success case
         formatted_result = format_data(user_question, payload_res)
-    elif sql:
+    elif sql:            
         formatted_result = format_data(
             user_question,
             sql_result
@@ -1142,6 +1238,7 @@ def _handle_sql_result(
                 entity_debug=entity_debug,
                 type_="ERP"
             )
+            
     return {
         "Model returned SQL": org_sql,
         "context": context,
@@ -1162,8 +1259,9 @@ def _handle_sql_result(
     }
 RETRY_PROMPT = read_asset("retry_sys_prompt.txt",base="prompts")
 RETRY_USER_PROMPT = read_asset("retry_user_prompt.txt",base="prompts")
-def retry_sql(sql, error, formatted_q, sql_prompt):
-    retry_prompt = SQL_SYS_PROMPT + RETRY_PROMPT
+def retry_sql(sql, error, formatted_q, sql_prompt,source="erp"):
+    base = GDOC_SYS_PROMPT if source == "gdoc" else SQL_SYS_PROMPT
+    retry_prompt = base + RETRY_PROMPT
     user_prompt = sql_prompt + RETRY_USER_PROMPT.format(sql=sql,error=error,formatted_q=formatted_q)
     try:
         rewritten = call_gemini(user_prompt, sys_prompt=retry_prompt)
@@ -1184,45 +1282,45 @@ def is_thread_erp(q:str,chat_id:str):
     else:
         return False
 
-@frappe.whitelist(allow_guest=False)
+@frappe.whitelist(allow_guest=True)
 def run_text2sql_pipeline(
     user_question: str,
-    chat_id: str,
-    request_id: str,
+    chat_id: str = "None",
+    request_id: str = "None",
+    source:str =  "erp",
     sendNonErptoAI: bool = False
 ) -> Dict:
     memory_status = check_memory_status()
-    logs = find_similar_log_question(user_question)
-    if logs.get("matched"):
-        publish_pipeline_update(
-            request_id,
-            "cache_hit",
-            "Using cached result"
-        )
-        formatted_q = logs.get("rewritten_question")
-        sql = logs.get("sql")
-        tables = json.loads(logs.get("tables") or "[]")
-        fields = logs.get("fields") or ""
-        entity_debug = json.loads(logs.get("entity_debug") or "{}")
-        return _handle_sql_result(
-            memory_status,
-            request_id,
-            None,
-            {},
-            sql,
-            formatted_q,
-            fields,
-            tables,
-            {"ok": True, "from_cache": True},
-            entity_debug,
-            user_question,
-            chat_id
-        )
+    if source!="gdoc":
+        logs = find_similar_log_question(user_question)
+        if logs.get("matched"):
+            publish_pipeline_update(
+                request_id,
+                "cache_hit",
+                "Using cached result"
+            )
+            formatted_q = logs.get("rewritten_question")
+            sql = logs.get("sql")
+            tables = json.loads(logs.get("tables") or "[]")
+            fields = logs.get("fields") or ""
+            entity_debug = json.loads(logs.get("entity_debug") or "{}")
+            return _handle_sql_result(
+                memory_status,
+                request_id,
+                None,
+                {},
+                sql,
+                formatted_q,
+                fields,
+                tables,
+                {"ok": True, "from_cache": True},
+                entity_debug,
+                user_question,
+                chat_id
+            )
 
-    # --------------------------------------------------
-    # PIPELINE INVOCATION
-    # --------------------------------------------------
     final, err_response = _invoke_pipeline(
+        source,
         user_question,
         chat_id,
         request_id,
@@ -1321,6 +1419,7 @@ def run_text2sql_pipeline(
     payload = final.get("payload") or {}
     payload_res = final.get("payload_res")
     sql = clean_sql(final.get("sql")) or ""
+    clarification = final.get("clarification") or ""
     formatted_q = _safe_strip(final.get("formatted_q") or "")
     context = final.get("context") or ""
     selected_tables = final.get("selected_tables") or []
@@ -1346,6 +1445,13 @@ def run_text2sql_pipeline(
             entity_debug,
             user_question,
             chat_id
+        )
+    clarification = final.get("clarification") or ""
+    if clarification:
+        return _handle_sql_result(
+            memory_status, request_id, sql_prompt, final, "",
+            formatted_q, fields, selected_tables, {}, entity_debug,
+            user_question, chat_id
         )
     if sql:
         res = validate_sql_schema(sql)
@@ -1374,7 +1480,8 @@ def run_text2sql_pipeline(
             sql,
             res.get("error"),
             formatted_q,
-            sql_prompt
+            sql_prompt,
+            source
         )
 
         if retry2_val_res.get("ok"):
@@ -1397,7 +1504,8 @@ def run_text2sql_pipeline(
             retried_sql2,
             retry2_val_res.get("error"),
             formatted_q,
-            sql_prompt
+            sql_prompt,
+            source
         )
 
         if retry3_val_res.get("ok"):
@@ -1450,37 +1558,3 @@ def run_text2sql_pipeline(
         "No SQL or Payload generated",
         err
     )
-
-
-
-@frappe.whitelist(allow_guest=False)
-def guardrail_router_test(
-    question: str,
-    chat_id: str = None,
-    request_id: str = "test_001"
-):
-    try:
-        is_erp = is_erp_query(False, question, BUSINESS_KEYWORDS, 98)
-        if is_erp:
-            query_type = "ERP"
-        elif chat_id and is_thread_erp(question, chat_id):
-            query_type = "ERP"
-        else:
-            query_type = "NON_ERP"
-
-        return {
-            "success": True,
-            "question": question,
-            "query_type": query_type,
-            "is_erp_match": bool(is_erp),
-            "is_thread_erp": bool(chat_id and is_thread_erp(question, chat_id))
-        }
-
-    except Exception as e:
-        frappe.log_error(frappe.get_traceback(), "Guardrail Router Test Error")
-        return {
-            "success": False,
-            "question": question,
-            "query_type": "NON_ERP",
-            "error": str(e)
-        }

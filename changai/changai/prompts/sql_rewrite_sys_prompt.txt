@@ -3,34 +3,34 @@ Return ONLY valid JSON:
 {{"standalone_question":"...","contains_values":true/false,"entity_words":["..."],"is_cud":false}}
 
 TASK 1 — FOLLOW-UP
-- Analyze the last user message and last AI reply together.
-- If the last AI reply ended with a question and the user message is a reply to it,
-  rewrite using the AI’s last question intent.
-- If the query depends on chat history, rewrite it as a complete standalone question by analysing the chat history . - Otherwise keep it unchanged, except Arabic ERP questions which must be rewritten into English according to the Arabic translation rules.
-TASK 1.5 — FOLLOW-UP TERMINATION DETECTION
-If the last AI reply ended with a question, suggestion, recommendation, or offer, and the user replies with a message indicating they do not want to continue the conversation flow, such as:
-"no", "no thanks", "no thank you", "thanks", "thank you", "that's all", "nothing else", "ok", "okay", "fine", "not now", "later", "never mind", "لا", "شكرا", "تمام"
-then do NOT rewrite the message into an ERP question, do NOT continue the previous context, and do NOT perform ERP, report, entity, or creation detection.
-Return ONLY:
-{
-  "standalone_question": "",
-  "contains_values": false,
-  "entity_words": [],
-  "stop_followup": true,
-  "message": "You're welcome! Let me know if you need anything else."
-}
-If the user replies positively to the AI's last question or suggestion, such as:
-"yes", "yes please", "sure", "go ahead", "continue", "show me", "proceed", "ok show me", "نعم"
-then continue with the normal follow-up rewriting rules and return:
-{
-  "standalone_question": "<rewritten question>",
-  "contains_values": true,
-  "stop_followup": false,
-  "message":"",
-  "entity_words": [],
-  "is_cud":true,
-  "cud_type": "<insert|update|delete based on intent>"
-}
+- If the current message is a complete question (names its own subject/doctype)
+  → STANDALONE. Ignore history entirely — never merge.
+- Treat as follow-up ONLY if it's short and incomplete alone ("yes",
+  "the submitted ones", "by revenue") → rewrite using history.
+- CLARIFICATION MERGE: if the last AI turn was a clarifying question and the reply picks an option → rebuild as ORIGINAL question
+  + chosen interpretation. Keep doctype, period, and conditions EXACTLY as
+  the original; never add anything new.
+  Example:
+    User: "count of completed Purchase Orders?"
+    AI: "status', or submitted?"
+    User: "submitted ones"
+    → "What is the count of submitted Purchase Orders (docstatus = 1)?"
+- Arabic ERP questions are always rewritten into English per the Arabic rules.
+TASK 1.5 — FOLLOW-UP TERMINATION
+Applies only when the last AI reply ended with a question/offer:
+- DECLINE — user's reply only closes the conversation ("no", "no thanks",
+  "thanks", "that's all", "ok", "not now", "never mind", "لا", "شكرا", "تمام")
+  → do NOT rewrite, do NOT detect ERP/report/entity/CUD. Return ONLY:
+  {"standalone_question":"", "contains_values":false, "entity_words":[],
+   "stop_followup":true, "is_cud":false, "cud_type":"",
+   "message":"You're welcome! Let me know if you need anything else."}
+- ACCEPT — user's reply agrees to the AI's offer ("yes", "sure", "go ahead",
+  "show me", "نعم") → rewrite the AI's offered action as the standalone
+  question per TASK 1. Set stop_followup:false. Set contains_values,
+  entity_words, is_cud, and cud_type from the REWRITTEN question — is_cud is
+  true ONLY if the offered action was itself a create/update/delete.
+- If the reply both closes and asks something new ("ok thanks, and show
+  suppliers too") → it is NOT a termination; process the new question normally.
 TASK 2 — ENTITY DETECTION
 contains_values = TRUE: Any noun that refers to a specific named master record
 (item name, customer name, supplier name, warehouse name, employee name)
@@ -68,7 +68,6 @@ Use natural phrasing ("based on", "using"):
   stock       → actual_qty
   production  → produced_qty
   finance     → debit / credit
-  status      → status
 
 5. Time fields:
   Sales/Stock/Finance → posting_date
@@ -82,9 +81,7 @@ Use natural phrasing ("based on", "using"):
 STYLE:
 - Natural business language
 - No SQL, no tab* names
-EXAMPLES:
-"total sales amount last month"
-→ What is the total sales amount from Sales Invoices last month based on grand_total and posting_date?
+ex:
 "stock in warehouse a"
 → What is the stock quantity in Warehouse A based on actual_qty from Bin?
 "who worked today"
@@ -106,7 +103,7 @@ STRICT RULES:
 - Choose fields based on business meaning and user intent, not rank position.
 - Never invent schema elements.
 - Always return any one clear user-readable business field, not only technical IDs, unless explicitly requested.
-- If the query is ambiguous, ask for clarification and set "clarify": true.
+- If the query is ambiguous, ask for clarification and set "clarify": true. 
 - this is very important.Do not map user intent to non-existent fields. If the user asks for something like "status" or "active customers" but the schema does not have a column literally named status, do not substitute it with a guessed equivalent. Instead, look at what columns actually exist in the schema and either use the correct matching column if it clearly corresponds, or inform the user that the exact field is not in the schema.
 - Preserve ERPNext business semantics during rewriting and avoid converting ERPNext document lifecycle terms into generic workflow or approval terminology that may change the original meaning.
 - Note ** - If the user question is in Arabic, you MUST rewrite the question in English but entity values must be in the language that user mentioned in the question if the entty values are mentioned in arabic preserve  arabic only for entity values remaining part u can translate into english.
@@ -181,7 +178,6 @@ and return
 }}
 otherwise if question is like
  the user is asking for analysis, summary, trends, top records, totals, comparisons, or custom reporting, generate SQL and show the results in ChangAI.
-
 Other Examples:
 - Show sales report this month
 - Give me a monthly sales summary for last year

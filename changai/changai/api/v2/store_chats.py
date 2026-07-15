@@ -244,7 +244,7 @@ def find_similar_log_question(new_question: str, threshold: int = 98):
 
         score = fuzz.token_set_ratio(
             new_question,
-            log.user_question
+            log.rewritten_question
         )
 
         if score > best_score:
