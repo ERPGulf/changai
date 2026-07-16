@@ -24,6 +24,16 @@
   "gemini_location",
   "gemini_project_id",
   "gemini_json_content",
+  "grok_section",
+  "xai_api_key",
+  "grok_model",
+  "groq_section",
+  "groq_api_key",
+  "groq_model",
+  "openai_settings_section",
+  "openai_model",
+  "claude_settings_section",
+  "claude_model",
   "section_break_gnue",
   "retain_memory",
   "last_schema_sync",
@@ -101,7 +111,7 @@
    "fieldname": "llm",
    "fieldtype": "Select",
    "label": "LLM",
-   "options": "QWEN3\nGemini"
+   "options": "QWEN3\nGemini\nGrok\nGroq\nOpenAI\nClaude"
   },
   {
    "fieldname": "column_break_irkb",
@@ -287,6 +297,79 @@
    "fieldtype": "Code",
    "label": "Service Account Credentials",
    "options": "JSON"
+  },
+  {
+   "fieldname": "grok_section",
+   "fieldtype": "Section Break",
+   "label": "Grok (xAI) Settings",
+   "depends_on": "eval:doc.llm == \"Grok\""
+  },
+  {
+   "fieldname": "xai_api_key",
+   "fieldtype": "Data",
+   "label": "xAI API Key",
+   "description": "Get your key from https://console.x.ai",
+   "depends_on": "eval:doc.llm == \"Grok\""
+  },
+  {
+   "fieldname": "grok_model",
+   "fieldtype": "Select",
+   "label": "Grok Model",
+   "options": "grok-3-mini\ngrok-3\ngrok-3-fast\ngrok-3-mini-fast",
+   "default": "grok-3-mini",
+   "depends_on": "eval:doc.llm == \"Grok\"",
+   "description": "grok-3-mini is recommended (cheapest, fast). grok-3 is most capable."
+  },
+  {
+   "fieldname": "groq_section",
+   "fieldtype": "Section Break",
+   "label": "Groq Settings (Free Tier)",
+   "depends_on": "eval:doc.llm == \"Groq\""
+  },
+  {
+   "fieldname": "groq_api_key",
+   "fieldtype": "Data",
+   "label": "Groq API Key",
+   "description": "Get your free key from https://console.groq.com/keys. Note: Groq (groq.com) is different from Grok (xAI).",
+   "depends_on": "eval:doc.llm == \"Groq\""
+  },
+  {
+   "fieldname": "groq_model",
+   "fieldtype": "Select",
+   "label": "Groq Model",
+   "options": "llama-3.3-70b-versatile\nllama-3.1-8b-instant\nopenai/gpt-oss-120b\ndeepseek-r1-distill-llama-70b\ngemma2-9b-it",
+   "default": "llama-3.3-70b-versatile",
+   "depends_on": "eval:doc.llm == \"Groq\"",
+   "description": "llama-3.3-70b-versatile is a strong free default; llama-3.1-8b-instant is fastest."
+  },
+  {
+   "fieldname": "openai_settings_section",
+   "fieldtype": "Section Break",
+   "label": "OpenAI Settings",
+   "depends_on": "eval:doc.llm == \"OpenAI\""
+  },
+  {
+   "fieldname": "openai_model",
+   "fieldtype": "Data",
+   "label": "OpenAI Model",
+   "default": "gpt-4o-mini",
+   "depends_on": "eval:doc.llm == \"OpenAI\"",
+   "description": "e.g. gpt-4o-mini (cheapest), gpt-4o, gpt-4.1-mini. Set the OpenAI API key field in the Remote Server tab. (OpenAI has no free API tier — paid usage only.)"
+  },
+  {
+   "fieldname": "claude_settings_section",
+   "fieldtype": "Section Break",
+   "label": "Claude (Anthropic) Settings",
+   "depends_on": "eval:doc.llm == \"Claude\""
+  },
+  {
+   "fieldname": "claude_model",
+   "fieldtype": "Select",
+   "label": "Claude Model",
+   "options": "claude-opus-4-8\nclaude-sonnet-4-6\nclaude-haiku-4-5",
+   "default": "claude-opus-4-8",
+   "depends_on": "eval:doc.llm == \"Claude\"",
+   "description": "claude-sonnet-4-6 / claude-haiku-4-5 are cheaper for high volume. Set the Claude API Key field in the Remote Server tab. (Anthropic has no free API tier — paid usage only.)"
   },
   {
    "fieldname": "gemini_api_key",

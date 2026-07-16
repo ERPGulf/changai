@@ -8,21 +8,45 @@ from google import genai
 from google.genai import types
 from google.oauth2 import service_account
 from google.api_core import exceptions as google_exceptions
+from openai import OpenAI
 from changai.changai.api.v2.schema_utils import (ChangAIConfig, CHANGAI_SETTINGS, CHANGAI_GUIDE_LINK, ERPGULF_LINK, settingsUrl)
 _GEMINI_CLIENT = None
 _GEMINI_CONFIG = None
+_GROK_CLIENT = None
 APPLICATION_JSON = "application/json"
 MODEL_ID = "gemini-2.5-flash-lite"
+GROK_BASE_URL = "https://api.x.ai/v1"
+GROK_DEFAULT_MODEL = "grok-3-mini"
 STATUS_200 = 200
+CLAUDE_DEFAULT_MODEL = "claude-opus-4-8"
+CLAUDE_MAX_TOKENS = 8000
 
+# OpenAI-compatible providers reachable through the OpenAI SDK with a custom
+# base_url. NOTE: "Groq" (groq.com, free tier) is a different vendor from the
+# "Grok" (xAI) provider configured above — do not confuse the two.
+OPENAI_COMPATIBLE_PROVIDERS = {
+    "Groq": {
+        "label": "Groq",
+        "base_url": "https://api.groq.com/openai/v1",
+        "api_key_field": "groq_api_key",
+        "model_field": "groq_model",
+        "default_model": "llama-3.3-70b-versatile",
+        "key_url": "https://console.groq.com/keys",
+    },
+    "OpenAI": {
+        "label": "OpenAI",
+        "base_url": None,  # native OpenAI endpoint
+        "api_key_field": "openai_api_key",
+        "model_field": "openai_model",
+        "default_model": "gpt-4o-mini",
+        "key_url": "https://platform.openai.com/api-keys",
+    },
+}
 
-def call_model(prompt: str, task: str = "llm",sys_prompt: str = "") -> Any:
-    config = ChangAIConfig.get()
-    if config["REMOTE"] and config["llm"] == "QWEN3":
-        return remote_llm_request_deploy_test(prompt=prompt, task=task)
-    else:
-        if config["llm"] == "Gemini":
-            return call_gemini(prompt,sys_prompt)
+# Clients cached by api key so changing the key in settings rebuilds them.
+_OPENAI_COMPAT_CLIENTS = {}
+_CLAUDE_CLIENT = None
+_CLAUDE_CLIENT_KEY = None
 
 
 def _post_json(url: str, headers: Dict[str, str], payload: Dict[str, Any], timeout: int = 120):
@@ -196,6 +220,34 @@ def gemini_client():
     return _GEMINI_CLIENT
 
 
+def grok_client():
+    global _GROK_CLIENT
+    if _GROK_CLIENT is None:
+        config = ChangAIConfig.get()
+        api_key = (config.get("grok_api_key") or "").strip()
+        if not api_key:
+            frappe.throw(
+                _(
+                    "Grok (xAI) API key is not configured.<br><br>"
+                    "Go to <b>ChangAI Settings</b> and enter your <b>xAI API Key</b>.<br>"
+                    "Get your key from <a href='https://console.x.ai' target='_blank' "
+                    "rel='noopener noreferrer' style='color: #1e90ff;'>console.x.ai</a>."
+                ),
+                title=_("Grok API Key Missing"),
+            )
+        _GROK_CLIENT = OpenAI(
+            api_key=api_key,
+            base_url=GROK_BASE_URL,
+        )
+    return _GROK_CLIENT
+
+
+def reset_grok_client():
+    """Reset cached Grok client — call after changing the xAI API key in settings."""
+    global _GROK_CLIENT
+    _GROK_CLIENT = None
+
+
 
 def _build_input_payload(task: str, prompt: str, question: Optional[str],
                           db_result_json: Optional[str], user_message: Optional[str]) -> Dict[str, Any]:
@@ -284,13 +336,18 @@ def remote_embedder_request(formatted_q: str) -> Union[List[Any], str]:
         return "Error: " + str(e)
 
 
-def call_model(prompt: str, task: str = "llm",sys_prompt: str = "") -> Any:
+def call_model(prompt: str, task: str = "llm", sys_prompt: str = "") -> Any:
     config = ChangAIConfig.get()
-    if config["REMOTE"] and config["llm"] == "QWEN3":
+    llm = config["llm"]
+    if config["REMOTE"] and llm == "QWEN3":
         return remote_llm_request_deploy_test(prompt=prompt, task=task)
-    else:
-        if config["llm"] == "Gemini":
-            return call_gemini(prompt,sys_prompt)
+    if llm == "Grok":
+        return call_grok(prompt, sys_prompt)
+    if llm == "Claude":
+        return call_claude(prompt, sys_prompt)
+    if llm in OPENAI_COMPATIBLE_PROVIDERS:
+        return call_openai_compatible(llm, prompt, sys_prompt)
+    return call_gemini(prompt, sys_prompt)
 
 
 def call_gemini(prompt: str,sys_prompt: str) -> Union[str, Dict[str, Any]]:
@@ -312,3 +369,178 @@ def call_gemini(prompt: str,sys_prompt: str) -> Union[str, Dict[str, Any]]:
         raise
     except Exception as e:
         _handle_gemini_api_exception(e)
+
+
+def call_grok(prompt: str, sys_prompt: str = "") -> str:
+    try:
+        config = ChangAIConfig.get()
+        model = (config.get("grok_model") or GROK_DEFAULT_MODEL).strip()
+        client = grok_client()
+
+        messages = []
+        if sys_prompt:
+            messages.append({"role": "system", "content": sys_prompt})
+        messages.append({"role": "user", "content": str(prompt)})
+
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+        )
+        text = (response.choices[0].message.content or "").strip()
+        if text.startswith("```"):
+            text = text.replace("```json", "").replace("```", "").strip()
+        return text
+
+    except frappe.exceptions.ValidationError:
+        raise
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "Grok API Error")
+        frappe.throw(
+            _(
+                "Grok API error: {0}<br><br>"
+                "Please check your <b>xAI API Key</b> and <b>Grok Model</b> in ChangAI Settings."
+            ).format(str(e)),
+            title=_("Grok API Error"),
+        )
+
+
+def _strip_code_fences(text: str) -> str:
+    text = (text or "").strip()
+    if text.startswith("```"):
+        text = text.replace("```json", "").replace("```", "").strip()
+    return text
+
+
+def openai_compatible_client(provider: str):
+    """Return a cached OpenAI SDK client for an OpenAI-compatible provider."""
+    spec = OPENAI_COMPATIBLE_PROVIDERS[provider]
+    config = ChangAIConfig.get()
+    api_key = (config.get(spec["api_key_field"]) or "").strip()
+    if not api_key:
+        frappe.throw(
+            _(
+                "{0} API key is not configured.<br><br>"
+                "Go to <b>ChangAI Settings</b> and enter your <b>{0} API Key</b>.<br>"
+                "Get your key from <a href='{1}' target='_blank' "
+                "rel='noopener noreferrer' style='color: #1e90ff;'>{1}</a>."
+            ).format(spec["label"], spec["key_url"]),
+            title=_("{0} API Key Missing").format(spec["label"]),
+        )
+    cached = _OPENAI_COMPAT_CLIENTS.get(provider)
+    if cached and cached[0] == api_key:
+        return cached[1]
+    kwargs = {"api_key": api_key}
+    if spec["base_url"]:
+        kwargs["base_url"] = spec["base_url"]
+    client = OpenAI(**kwargs)
+    _OPENAI_COMPAT_CLIENTS[provider] = (api_key, client)
+    return client
+
+
+def call_openai_compatible(provider: str, prompt: str, sys_prompt: str = "") -> str:
+    spec = OPENAI_COMPATIBLE_PROVIDERS[provider]
+    try:
+        config = ChangAIConfig.get()
+        model = (config.get(spec["model_field"]) or spec["default_model"]).strip()
+        client = openai_compatible_client(provider)
+
+        messages = []
+        if sys_prompt:
+            messages.append({"role": "system", "content": sys_prompt})
+        messages.append({"role": "user", "content": str(prompt)})
+
+        response = client.chat.completions.create(model=model, messages=messages)
+        text = (response.choices[0].message.content or "").strip()
+        return _strip_code_fences(text)
+
+    except frappe.exceptions.ValidationError:
+        raise
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), f"{spec['label']} API Error")
+        frappe.throw(
+            _(
+                "{0} API error: {1}<br><br>"
+                "Please check your <b>{0} API Key</b> and <b>{0} Model</b> in ChangAI Settings."
+            ).format(spec["label"], str(e)),
+            title=_("{0} API Error").format(spec["label"]),
+        )
+
+
+def claude_client():
+    """Return a cached Anthropic client, rebuilt when the API key changes."""
+    global _CLAUDE_CLIENT, _CLAUDE_CLIENT_KEY
+    config = ChangAIConfig.get()
+    api_key = (config.get("claude_api_key") or "").strip()
+    if not api_key:
+        frappe.throw(
+            _(
+                "Claude (Anthropic) API key is not configured.<br><br>"
+                "Go to <b>ChangAI Settings</b> and enter your <b>Claude API Key</b>.<br>"
+                "Get your key from <a href='https://console.anthropic.com/settings/keys' "
+                "target='_blank' rel='noopener noreferrer' style='color: #1e90ff;'>"
+                "console.anthropic.com</a>."
+            ),
+            title=_("Claude API Key Missing"),
+        )
+    if _CLAUDE_CLIENT is not None and _CLAUDE_CLIENT_KEY == api_key:
+        return _CLAUDE_CLIENT
+    try:
+        import anthropic
+    except ImportError:
+        frappe.throw(
+            _(
+                "The <b>anthropic</b> Python package is not installed.<br><br>"
+                "Install it in your bench environment:<br>"
+                "<code>./env/bin/pip install anthropic</code>"
+            ),
+            title=_("Anthropic SDK Not Installed"),
+        )
+    _CLAUDE_CLIENT = anthropic.Anthropic(api_key=api_key)
+    _CLAUDE_CLIENT_KEY = api_key
+    return _CLAUDE_CLIENT
+
+
+def call_claude(prompt: str, sys_prompt: str = "") -> str:
+    try:
+        config = ChangAIConfig.get()
+        model = (config.get("claude_model") or CLAUDE_DEFAULT_MODEL).strip()
+        client = claude_client()
+
+        kwargs = {
+            "model": model,
+            "max_tokens": CLAUDE_MAX_TOKENS,
+            "messages": [{"role": "user", "content": str(prompt)}],
+        }
+        if sys_prompt:
+            kwargs["system"] = sys_prompt
+        # Adaptive thinking keeps reasoning in separate blocks so the text blocks
+        # stay clean. Haiku does not support it, so only enable for other models.
+        if not model.lower().startswith("claude-haiku"):
+            kwargs["thinking"] = {"type": "adaptive"}
+
+        response = client.messages.create(**kwargs)
+        text = "".join(
+            block.text for block in response.content if block.type == "text"
+        ).strip()
+        return _strip_code_fences(text)
+
+    except frappe.exceptions.ValidationError:
+        raise
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "Claude API Error")
+        frappe.throw(
+            _(
+                "Claude API error: {0}<br><br>"
+                "Please check your <b>Claude API Key</b> and <b>Claude Model</b> in ChangAI Settings."
+            ).format(str(e)),
+            title=_("Claude API Error"),
+        )
+
+
+def reset_llm_clients():
+    """Reset all cached provider clients — call after changing any API key."""
+    global _GROK_CLIENT, _CLAUDE_CLIENT, _CLAUDE_CLIENT_KEY
+    _GROK_CLIENT = None
+    _CLAUDE_CLIENT = None
+    _CLAUDE_CLIENT_KEY = None
+    _OPENAI_COMPAT_CLIENTS.clear()
