@@ -33,7 +33,7 @@ from changai.changai.api.v2.schema_utils import (
     hits_to_schema_context,
     CHANGAI_GUIDE_LINK,
     ERPGULF_LINK,
-    settingsUrl,
+    get_settings_url,
     publish_pipeline_update,
     ChangAIConfig
 )
@@ -544,7 +544,7 @@ def check_update(res:dict):
             "Check Quick Start Guide Here 👇:<br>"
             "<a href='{1}' target='_blank' rel='noopener noreferrer' style='color: #1e90ff;'>Click here</a><br>"
             "<a href='{2}' target='_blank' rel='noopener noreferrer' style='color:#1e90ff;'>ERPGulf.com</a>"
-        ).format(settingsUrl, CHANGAI_GUIDE_LINK, ERPGULF_LINK))
+        ).format(get_settings_url(), CHANGAI_GUIDE_LINK, ERPGULF_LINK))
 
     if res.get("is_stale"):
         frappe.throw(_(
@@ -556,7 +556,7 @@ def check_update(res:dict):
             "Check Quick Start Guide Here 👇:<br>"
             "<a href='{2}' target='_blank' rel='noopener noreferrer' style='color: #1e90ff;'>Click here</a><br>"
             "<a href='{3}' target='_blank' rel='noopener noreferrer' style='color:#1e90ff;'>ERPGulf.com</a>"
-        ).format(res.get("days"), settingsUrl, CHANGAI_GUIDE_LINK, ERPGULF_LINK))
+        ).format(res.get("days"), get_settings_url(), CHANGAI_GUIDE_LINK, ERPGULF_LINK))
 
 def generate_orm(state: SQLState) -> SQLState:
     from changai.changai.api.v2.auto_gen_api import update_masterdata
