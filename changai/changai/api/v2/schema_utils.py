@@ -18,9 +18,9 @@ from rapidfuzz import fuzz, process
 _VALUE_TO_FIELD = {}
 CHANGAI_GUIDE_LINK="https://app.erpgulf.com/en/articles/chang-ai-quick-start-guide"
 ERPGULF_LINK = "https://app.erpgulf.com/en/products/chang-ai-an-ai-agent"
-settingsUrl = frappe.utils.get_url(
-    "/app/changai-settings/ChangAI%20Settings"
-)
+# settingsUrl = frappe.utils.get_url(
+#     "/app/changai-settings/ChangAI%20Settings"
+# )
 CHANGAI_SETTINGS = "ChangAI Settings"
 _ASSETS_DIR = Path(frappe.get_app_path("changai", "changai", "api", "v2", "assets")).resolve()
 _PROMPTS_DIR = Path(frappe.get_app_path("changai", "changai", "prompts")).resolve()
@@ -30,7 +30,13 @@ RAG_FOLDER = "Home/RAG Sources"
 JSON_EXT = ".json"
 YAML_EXT = ".yaml"
 
+_settings_url = None
 
+def get_settings_url():
+    global _settings_url
+    if _settings_url is None:
+        _settings_url = frappe.utils.get_url("/app/changai-settings/ChangAI%20Settings")
+    return _settings_url
 
 def get_report_filter_fields(report_name: str):
     try:
