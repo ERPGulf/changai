@@ -141,22 +141,94 @@ def build_report_docs(report_list: List[Dict[str, Any]]) -> List[Document]:
     return docs
 
 def build_table_docs(table_list: List[str]) -> List[Document]:
-    """
-    Build one Document per table name from tables.json.
-    tables.json is a flat list: ["tabSales Invoice", "tabPurchase Order", ...]
-    """
     docs = []
-    for table_name in table_list:
-        if not isinstance(table_name, str) or not table_name.strip():
+    for row in table_list:
+        if not isinstance(row, dict):
             continue
+        table_name = row.get("table") or ""
+        description = row.get("description", "") or ""
+        if not isinstance(table_name,str) or not table_name.strip():
+            continue
+        page_content = f"[TABLE] {table_name}"
+        if description:
+            page_content += f"\n{description}"
         docs.append(Document(
-            page_content=f"[TABLE] {table_name}",
+            page_content=page_content,
             metadata={
                 "type": "table",
                 "table": table_name,
+                "description": description
             }
         ))
     return docs
+
+from changai.changai.api.v2.clients import call_gemini
+def _generate_table_description(table_name: str):
+    SYSTEM_PROMPT = """You are a database documentation assistant for an ERPNext semantic search system. ERPNext is a well-known open-source ERP application with a fixed, well-documented set of DocTypes. Your job is to write short, accurate, plain-language descriptions of ERPNext database tables so that an embedding model can match user questions to the correct table.
+
+Rules you must always follow:
+- Table names are prefixed with "tab" followed by the exact DocType name (e.g. "tabSales Invoice" = the Sales Invoice DocType). Identify the precise, real ERPNext DocType before describing it — do not guess loosely from surface wording.
+- ERPNext has many DocTypes with similar-sounding names that represent DIFFERENT stages of a business process (e.g. a request/commitment stage vs. a fulfillment stage vs. a billing/payment stage vs. an internal movement). Think carefully about which exact stage and transaction type this specific DocType represents, and make that distinction clear in your description — do not default to the most generic or most common-sounding interpretation of the name.
+- Write exactly ONE sentence, maximum 30 words.
+- Use plain business language — avoid technical/database jargon (no "entity," "record set," "schema," etc.).
+- Describe the real-world business data or transaction this table represents, and its stage/purpose in the business process where relevant, not how it's structured internally.
+- Do NOT repeat the table name verbatim in your description.
+- Do NOT include quotes, labels, preambles, or any text other than the description itself.
+- If you are not confident about the exact ERPNext DocType semantics for a given table, describe it cautiously and generically rather than inventing specifics that may be wrong.
+
+Output format: plain text, one sentence, nothing else."""
+
+    USER_PROMPT = f"""Table name: {table_name}
+This is a table from ERPNext. First identify the exact ERPNext DocType it corresponds to (strip the "tab" prefix). Then consider what distinguishes it from any similarly-named or similarly-purposed DocTypes in ERPNext, and write a description that reflects its specific, accurate business role.
+Write the description now.
+Output format: plain text, one sentence only — no quotes, no labels, no preamble, nothing else."""
+
+    try:
+        response = call_gemini(USER_PROMPT, SYSTEM_PROMPT)
+        return response
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), f"Gemini description generation failed: {table_name}")
+        return ""
+
+def enrich_tables_descriptions(table_list: List[Any]) -> List[Dict[str, Any]]:
+    normalized = []
+
+    for row in table_list:
+        if isinstance(row, str):
+            row = {"table": row, "description": ""}
+        elif not isinstance(row, dict):
+            continue  # skip genuinely invalid entries
+
+        if not row.get("description"):
+            table_name = row.get("table")
+            if table_name:
+                desc = _generate_table_description(table_name)
+                if desc:
+                    row["description"] = desc
+
+        normalized.append(row)   # <-- always append the (possibly converted) row
+    return normalized   # <-- return the converted list, not the original
+
+def _save_tables_json_to_file_doc(tables_list: List[Dict[str, Any]], file_name: str = "tables.json", folder: str = RAG_FOLDER):
+    """
+    Write updated tables.json back to the Frappe File doctype so future
+    rebuilds pick up the generated descriptions without re-calling Gemini.
+    """
+    file_id = frappe.db.get_value("File", {"file_name": file_name, "folder": folder}, "name")
+    content = json.dumps(tables_list, indent=2, ensure_ascii=False)
+
+    if file_id:
+        doc = frappe.get_doc("File", file_id)
+        doc.save_file(content=content.encode("utf-8"), overwrite=True)
+    else:
+        frappe.get_doc({
+            "doctype": "File",
+            "file_name": file_name,
+            "folder": folder,
+            "content": content,
+        }).insert(ignore_permissions=True)
+
+    frappe.db.commit()
 
 def _is_valid_schema_table(table_block: Any) -> bool:
     return isinstance(table_block, dict) and "table" in table_block

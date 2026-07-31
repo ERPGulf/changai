@@ -68,17 +68,7 @@ def get_mod(app_names: list[str]):
         for app in app_names 
         for module in frappe.get_all("Module Def", filters={"app_name": app}, pluck="name")
     ]
-SYSTEM_FIELDS = [
-    {"fieldname": "name", "fieldtype": "Data", "label": "ID"},
-    {"fieldname": "docstatus", "fieldtype": "Int", "label": "Document Status"},
-    {"fieldname": "owner", "fieldtype": "Link", "label": "Owner", "options": "User"},
-    {"fieldname": "creation", "fieldtype": "Datetime", "label": "Created On"},
-    {"fieldname": "modified", "fieldtype": "Datetime", "label": "Last Modified"},
-    {"fieldname": "parent", "fieldtype": "Data", "label": "Parent Document"},
-    {"fieldname": "parenttype", "fieldtype": "Data", "label": "Parent DocType"},
-    {"fieldname": "parentfield", "fieldtype": "Data", "label": "Parent Field"},
-    {"fieldname": "idx", "fieldtype": "Int", "label": "Row Index"},
-]
+
 EXCLUDED_FIELDTYPES: Set[str] = {
     # Layout / Structure — no data value
     "Section Break",
@@ -168,14 +158,6 @@ def _strip_tab(t: str) -> str:
     t = (t or "").strip()
     return t[3:] if t.startswith("tab") else t
 
-MODULES_TO_SYNC = [ 
-    "Customer",
-    "Supplier",
-    "Item",
-    "Warehouse",
-    "Company",
-    "Account"]
-
 
 def _normalize_master_data_payload(payload: Any) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
     if not isinstance(payload, dict):
@@ -189,120 +171,13 @@ def _normalize_master_data_payload(payload: Any) -> tuple[Dict[str, Any], List[D
     return meta, data
 
 
-def _extract_existing_keys(data: List[Any]) -> Set[tuple]:
-    keys: Set[tuple] = set()
-    for row in data:
-        if not isinstance(row, dict):
-            continue
-        dt = row.get("entity_type")
-        eid = row.get("entity_id")
-        if dt and eid:
-            keys.add((dt, eid))
-    return keys
-
-
-def _build_master_data_row(entity_type: str, entity_id:str,title_field:str,filter: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _build_master_data_row(entity_type: str, entity_id:str,doc_name:str, title_field:str,filter: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return {
         "entity_type": entity_type,
         "entity_id": entity_id,
+        "doc_name": doc_name or entity_id,
         "filters": filter or {"field": title_field if title_field else "name", "value": entity_id},
     }
-
-
-def _get_master_data_filters(last_sync: Optional[str]) -> Dict[str, Any]:
-    if not last_sync:
-        return {}
-    return {"creation": [">", last_sync]}
-
-
-@frappe.whitelist(allow_guest=False)
-def update_masterdata():
-    frappe.enqueue(
-        "changai.changai.api.v2.auto_gen_api.sync_master_data_smart",
-        queue="long",
-        timeout=1800,
-    )
-    frappe.enqueue(
-        "changai.changai.api.v2.build_cards_faiss_index_v2.build_master_data_fvs_job",
-        queue="long",
-        timeout=1800,
-    )
-    return {
-        "ok":True,
-        "message":"Master Data update running in RQ Job"
-    }
-
-@frappe.whitelist(allow_guest=False)
-def sync_master_data_smart() -> Dict[str, Any]:
-    file_name = "master_data.yaml"
-    payload = _read_filedoctype(file_name, RAG_FOLDER)
-    meta, data = _normalize_master_data_payload(payload)
-    added_total = 0
-    removed_total = 0
-    added_by_module: Dict[str, int] = {}
-    removed_by_module: Dict[str, int] = {}
-    fetched_by_module: Dict[str, int] = {}
-    rebuilt_rows: List[Dict[str, Any]] = []
-    for mod in MODULES_TO_SYNC:
-        entity_type = f"tab{mod}"
-        existing_rows = [
-            row for row in data
-            if isinstance(row, dict) and row.get("entity_type") == entity_type
-        ]
-        existing_ids = {
-            row.get("entity_id")
-            for row in existing_rows
-            if row.get("entity_id")
-        }
-        meta_doc = frappe.get_meta(mod)
-        title_field = meta_doc.title_field or "name"
-        fields =["name"]
-        if title_field !="name":
-            fields.append(title_field)
-        live_records = frappe.get_all(mod, fields=fields,limit_page_length=0)
-        live_ids = {rec.get("name") for rec in live_records if rec.get("name")}
-        fetched_by_module[mod] = len(live_ids)
-        added_ids = live_ids - existing_ids
-        removed_ids = existing_ids - live_ids
-        added_by_module[mod] = len(added_ids)
-        removed_by_module[mod] = len(removed_ids)
-        added_total += len(added_ids)
-        removed_total += len(removed_ids)
-        for rec in live_records:
-            if mod == "Item":
-                item_code = rec.get("name")
-                item_name = rec.get(title_field)
-                if item_code:
-                    filters = [{"field": "item_code", "value": item_code}]
-                    if item_name and item_name != item_code:
-                        filters.append({"field": "item_name", "value": item_name})
-                    rebuilt_rows.append(
-                        _build_master_data_row(entity_type, item_code, title_field, filters)
-                    )
-            else:
-                entity_id = rec.get(title_field) if title_field in rec else rec.get("name")
-                rebuilt_rows.append(_build_master_data_row(entity_type, entity_id, title_field, None))   
-    final_data = rebuilt_rows
-    meta["last_sync"] = str(now_datetime())
-    settings = frappe.get_single("ChangAI Settings")
-    settings.last_masterdata_sync = meta["last_sync"]
-    settings.save(ignore_permissions=True)
-    payload_out = {"_meta": meta, "data": final_data}
-    file_doc = write_filedoctype(file_name, payload_out, folder=RAG_FOLDER)
-    return {
-        "ok": True,
-        "message": _("Master data sync complete."),
-        "added_total": added_total,
-        "removed_total": removed_total,
-        "added_by_module": added_by_module,
-        "removed_by_module": removed_by_module,
-        "fetched_by_module": fetched_by_module,
-        "last_sync_used": meta.get("last_sync"),
-        "new_last_sync": meta["last_sync"],
-        "file_url": file_doc.file_url,
-        "fvs_error": None,
-    }
-
 
 def _clean_schema_fields(by_table: Dict[str, Dict[str, Any]]) -> None:
     for block in by_table.values():
@@ -318,9 +193,10 @@ def _clean_schema_fields(by_table: Dict[str, Dict[str, Any]]) -> None:
                 field.pop("child_hint", None)
 
 
-def get_doctypes_changed_since(last_sync: Optional[str]) -> List[str]:
-    app_names=["erpnext","frappe"]
-    erpnext_modules = get_mod(app_names)
+def get_doctypes_changed_since(last_sync: Optional[str],erpnext_modules: Optional[List[str]] = None) -> List[str]:
+    if erpnext_modules is None:
+        app_names=["erpnext","frappe"]
+        erpnext_modules = get_mod(app_names)
     filters = {
     "module": ["in", erpnext_modules],
     "issingle": 0,
@@ -367,10 +243,6 @@ def _normalize_schema_payload(payload: Any) -> tuple[Dict[str, Any], List[Dict[s
     return meta, tables_blocks
 
 
-def _normalize_existing_tables(existing_tables: Any) -> List[str]:
-    return existing_tables if isinstance(existing_tables, list) else []
-
-
 def _build_table_map(tables_blocks: List[Any]) -> Dict[str, Dict[str, Any]]:
     return {
         block.get("table"): block
@@ -379,27 +251,10 @@ def _build_table_map(tables_blocks: List[Any]) -> Dict[str, Dict[str, Any]]:
     }
 
 
-def _get_changed_doctypes(last_sync_raw: Optional[str]) -> List[str]:
+def _get_changed_doctypes(last_sync_raw: Optional[str],erpnext_modules: Optional[List[str]] = None) -> List[str]:
     if not last_sync_raw:
         return []
-    return get_doctypes_changed_since(last_sync_raw)
-
-
-def _get_tables_to_process(
-    by_table: Dict[str, Dict[str, Any]],
-    existing_tables: List[str],
-    changed_doctypes: List[str],
-) -> tuple[Set[str], Set[str], Set[str], List[str], List[str]]:
-    changed_tables = {_tab(dt) for dt in changed_doctypes}
-    existing_tables_set = set(existing_tables)
-    missing_from_schema = {t for t in existing_tables if t not in by_table}
-    new_from_changed = {
-        t for t in changed_tables
-        if t not in by_table and t not in existing_tables_set
-    }
-    tables_to_process = sorted(changed_tables | missing_from_schema | new_from_changed)
-    merged_tables = sorted(existing_tables_set | changed_tables)
-    return changed_tables, missing_from_schema, new_from_changed, tables_to_process, merged_tables
+    return get_doctypes_changed_since(last_sync_raw,erpnext_modules)
 
 
 def _get_existing_fields_for_table(by_table: Dict[str, Dict[str, Any]], table: str) -> Dict[str, Dict[str, Any]]:
@@ -522,22 +377,18 @@ def _build_field_entry(
 def _write_schema_outputs(
     meta: Dict[str, Any],
     by_table: Dict[str, Dict[str, Any]],
-    current_tables: List[str],
+    table_dict_with_desc: List[Dict[str,Any]],
 ) -> None:
     reports = []
-    ordered_blocks = [by_table[t] for t in current_tables if t in by_table]
-    final_tables = [block["table"] for block in ordered_blocks]
+    current_table_names = [row.get("table") for row in table_dict_with_desc if isinstance(row, dict) and row.get("table")]
+    ordered_blocks = [by_table[t] for t in current_table_names if t in by_table]
     reports = frappe.get_all("Report",fields=["name","report_name","ref_doctype"])
     write_filedoctype(
         SCHEMA_YAML,
         {"_meta": meta, "tables": ordered_blocks},
         folder=RAG_FOLDER,
     )
-    write_filedoctype(
-        TABLES_JSON,
-        final_tables,
-        folder=RAG_FOLDER,
-    )
+    write_filedoctype(TABLES_JSON, table_dict_with_desc, folder=RAG_FOLDER)  
     write_filedoctype(
         REPORTS_JSON,
         reports,
@@ -590,9 +441,9 @@ def fill_missing_field_descriptions(
     if not isinstance(tables_blocks, list):
         return {"ok": False, "message": _("schema.yaml invalid")}
 
-    client = _get_claude_client()
-    if not client:
-        return {"ok": False, "message": _("Claude API key missing")}
+    # client = _get_claude_client()
+    # if not client:
+    #     return {"ok": False, "message": _("Claude API key missing")}
     updated_tables = 0
     updated_fields = 0
     processed_updated_tables = 0
@@ -603,7 +454,7 @@ def fill_missing_field_descriptions(
         _reset_frappe_local_cache()
 
         result = _process_table_for_missing_descriptions(
-            client=client,
+            # client=client,
             block=block,
             batch_size=batch_size,
         )
@@ -637,19 +488,7 @@ def fill_missing_field_descriptions(
         "fields_updated": updated_fields,
         "status": "Complete" if consecutive_errors <= 5 else "Partial Failure",
     }
-
-
-
-# def clear_schema_field_caches() -> None:
-#     """
-#     Call this when schema_fvs is rebuilt/refreshed.
-#     """
-#     global _TABLE_FIELD_DOCS_CACHE, _TABLE_FIELD_VS_CACHE, _FULL_FIELDS_VS
-#     with _TABLE_FIELD_CACHE_LOCK:
-#         _TABLE_FIELD_DOCS_CACHE = None
-#         _TABLE_FIELD_VS_CACHE = OrderedDict()
-#         _FULL_FIELDS_VS = None
-
+from changai.changai.api.v2.build_cards_faiss_index_v2 import enrich_tables_descriptions
 
 @frappe.whitelist(allow_guest=False)
 def sync_tables_and_schema_smart() -> Dict[str, Any]:
@@ -657,9 +496,9 @@ def sync_tables_and_schema_smart() -> Dict[str, Any]:
     meta, tables_blocks = _normalize_schema_payload(payload)
     by_table = _build_table_map(tables_blocks)
     last_sync_raw = meta.get("last_sync")
-    changed_doctypes = _get_changed_doctypes(last_sync_raw)
     app_names=["erpnext","frappe"]
     erpnext_modules = get_mod(app_names)
+    changed_doctypes = _get_changed_doctypes(last_sync_raw,erpnext_modules)
     current_doctypes = frappe.get_all(
     "DocType",
     filters={
@@ -674,7 +513,8 @@ def sync_tables_and_schema_smart() -> Dict[str, Any]:
     changed_tables = {_tab(dt) for dt in changed_doctypes}
     missing_from_schema = {t for t in current_tables if t not in by_table}
 
-    tables_to_process = current_tables
+    tables_to_process = sorted(changed_tables | missing_from_schema)
+    table_dict_with_desc = enrich_tables_descriptions(current_tables)
 
     for table in tables_to_process:
         _process_schema_table(table, by_table)
@@ -693,19 +533,16 @@ def sync_tables_and_schema_smart() -> Dict[str, Any]:
     settings.save(ignore_permissions=True)
 
     try:
-        _write_schema_outputs(meta, by_table, current_tables)
+        _write_schema_outputs(meta, by_table, table_dict_with_desc)
     except Exception as e:
+        frappe.log_error(frappe.get_traceback(), str(e))
         return {"ok": False, "error": str(e)}
-
     return {
         "ok": True,
         "changed_tables": len(changed_tables),
         "missing_added": len(missing_from_schema),
         "total_tables": len(current_tables),
-        "message": f"Synced {len(changed_tables)} changed + {len(missing_from_schema)} missing tables",
     }
-
-
 def _get_claude_client() -> Optional[Anthropic]:
     
     settings = frappe.get_single("ChangAI Settings")
@@ -868,18 +705,33 @@ def _save_schema_checkpoint(meta: Dict[str, Any], tables_blocks: List[Dict[str, 
     )
 
 
-def _process_pending_field_batches(
-    client,
-    table: str,
-    pending_fields: List[Dict[str, Any]],
-    batch_size: int,
-) -> Dict[str, int]:
+
+def _process_table_for_missing_descriptions(block: Dict[str, Any], batch_size: int) -> Dict[str, int]:
+    if not isinstance(block, dict):
+        return {"updated_in_table": 0, "updated_fields": 0, "consecutive_errors": 0, "skipped": 1}
+    table = block.get("table")
+    pending_fields = _get_pending_fields(block)
+    if not pending_fields:
+        block["desc_done"] = True
+        return {"updated_in_table": 0, "updated_fields": 0, "consecutive_errors": 0, "skipped": 0}
+    block["desc_done"] = False
+    try:
+        result = _process_pending_field_batches(table=table, pending_fields=pending_fields, batch_size=batch_size)   # no client=
+    except Exception as e:
+        frappe.logger().error(f"Critical error in table {table}: {e}")
+        return {"updated_in_table": 0, "updated_fields": 0, "consecutive_errors": 1, "skipped": 0}
+    if result["updated_in_table"]:
+        _mark_table_desc_done(block)
+    result["skipped"] = 0
+    return result
+
+def _process_pending_field_batches(table: str, pending_fields: List[Dict[str, Any]], batch_size: int) -> Dict[str, int]:
     updated_in_table = 0
     updated_fields = 0
     consecutive_errors = 0
     for i in range(0, len(pending_fields), batch_size):
         batch = pending_fields[i:i + batch_size]
-        desc_map = _smart_desc_map(client, table, batch)
+        desc_map = _smart_desc_map_gemini(table, batch)   # was _smart_desc_map(client, table, batch)
         if not desc_map:
             consecutive_errors += 1
             continue
@@ -890,106 +742,98 @@ def _process_pending_field_batches(
                 field["description"] = desc_map[field_name].strip()
                 updated_fields += 1
                 updated_in_table += 1
-    return {
-        "updated_in_table": updated_in_table,
-        "updated_fields": updated_fields,
-        "consecutive_errors": consecutive_errors,
-    }
-
-
-def _process_table_for_missing_descriptions(
-    client,
-    block: Dict[str, Any],
-    batch_size: int,
-) -> Dict[str, int]:
-    if not isinstance(block, dict):
-        return {
-            "updated_in_table": 0,
-            "updated_fields": 0,
-            "consecutive_errors": 0,
-            "skipped": 1,
-        }
-    table = block.get("table")
-    pending_fields = _get_pending_fields(block)
-    if not pending_fields:
-        block["desc_done"] = True
-        return {
-            "updated_in_table": 0,
-            "updated_fields": 0,
-            "consecutive_errors": 0,
-            "skipped": 0,
-        }
-    block["desc_done"] = False
-    try:
-        result = _process_pending_field_batches(
-            client=client,
-            table=table,
-            pending_fields=pending_fields,
-            batch_size=batch_size,
-        )
-    except Exception as e:
-        frappe.logger().error(f"Critical error in table {table}: {e}")
-        return {
-            "updated_in_table": 0,
-            "updated_fields": 0,
-            "consecutive_errors": 1,
-            "skipped": 0,
-        }
-    if result["updated_in_table"]:
-        _mark_table_desc_done(block)
-
-    result["skipped"] = 0
-    return result
-
-
-@frappe.whitelist()
-def sync_schema_and_enqueue_descriptions() -> Dict[str, Any]:
+    return {"updated_in_table": updated_in_table, "updated_fields": updated_fields, "consecutive_errors": consecutive_errors}
+def _smart_desc_map_gemini(table_name: str, fields: List[Dict[str, Any]]) -> Dict[str, str]:
+    field_names = _get_field_names(fields)
+    if not field_names:
+        return {}
+    prompt = _build_desc_prompt(table_name, field_names)
+    system_prompt = "Return ONLY a valid JSON object. No markdown. No extra text."
+    for attempt in range(3):
+        try:
+            response = call_gemini(prompt, system_prompt)
+            text = (response or "").strip()
+            parsed = _extract_json_object(text)
+            normalized = _normalize_desc_map(parsed)
+            if normalized:
+                return normalized
+            frappe.logger().warning(f"Gemini returned non-JSON table={table_name} attempt={attempt+1} preview={text[:200]!r}")
+        except Exception as e:
+            frappe.logger().error(f"Gemini error table={table_name} attempt={attempt+1}: {e}")
+        time.sleep(2 * (attempt + 1))
+    return {}
+def full_schema_rebuild_job():
     res = sync_tables_and_schema_smart()
-    if not res.get("ok"):
-        return res
+    if res and res.get("ok"):
+        fill_missing_field_descriptions()
+        convert_yaml_schema_to_sqlglot_meta()
+        build_table_fvs_job()
+        build_schema_fvs_job()
+
+SCHEMA_REBUILD_LOCK_KEY = "changai:schema_full_rebuild_pending"
+def _schedule_full_schema_rebuild():
+    if frappe.cache().get_value(SCHEMA_REBUILD_LOCK_KEY):
+        return
+    frappe.cache().set_value(SCHEMA_REBUILD_LOCK_KEY, "1", expires_in_sec=14400 + 60)
     frappe.enqueue(
-        "changai.changai.api.v2.auto_gen_api.fill_missing_field_descriptions",
+        "changai.changai.api.v2.auto_gen_api.full_schema_rebuild_job",
         queue="long",
         timeout=14400,
     )
-    convert_yaml_schema_to_sqlglot_meta()
-    frappe.enqueue(
-        "changai.changai.api.v2.build_cards_faiss_index_v2.build_table_fvs_job",
-        queue="long",
-        timeout=1800,
-    )
-    frappe.enqueue(
-        "changai.changai.api.v2.build_cards_faiss_index_v2.build_schema_fvs_job",
-        queue="long",
-        timeout=1800,
-    )
-    # clear_schema_field_caches()
-    return {"ok": True, "message": _("Schema updated ✅ Field descriptions running in background 🧠")}
 
+@frappe.whitelist()
+def schema_sync(doc=None,method=None):
+    if method == "on_update" and doc and doc.creation == doc.modified:
+        return
+    if not doc:
+        return
+    if frappe.flags.in_migrate or frappe.flags.in_install:
+        return _schedule_full_schema_rebuild()
+    else:
+        frappe.enqueue(
+        "changai.changai.api.v2.auto_gen_api.sync_schema_single",
+        queue="short",
+        timeout=300,
+        doctype_name=doc.name,
+        deleted=(method == "after_delete"),
+)
+def _write_schema_outputs_incremental(meta, by_table, deleted_table: Optional[str] = None):
+    ordered_blocks = list(by_table.values())
+    write_filedoctype(SCHEMA_YAML, {"_meta": meta, "tables": ordered_blocks}, folder=RAG_FOLDER)
 
-def _get_field_names(fields: List[Dict[str, Any]]) -> List[str]:
-    return [
-        field.get("name")
-        for field in fields
-        if isinstance(field, dict) and field.get("name")
-    ]
+    tables_payload = _read_filedoctype(TABLES_JSON, RAG_FOLDER) or []
+    tables_payload = [row for row in tables_payload if isinstance(row, dict)]
 
+    if deleted_table:
+        tables_payload = [row for row in tables_payload if row.get("table") != deleted_table]
+    else:
+        for table_name, block in by_table.items():
+            existing = next((r for r in tables_payload if r.get("table") == table_name), None)
+            if existing:
+                existing["description"] = block.get("description", "")
+            else:
+                tables_payload.append({"table": table_name, "description": block.get("description", "")})
 
-def _build_desc_prompt(table_name: str, field_names: List[str]) -> str:
-    return f"""
-Generate SHORT, HIGH-SIGNAL ERP field descriptions for embedding retrieval.
+    write_filedoctype(TABLES_JSON, tables_payload, folder=RAG_FOLDER)
+@frappe.whitelist()
+def sync_schema_single(doctype_name: str, deleted: bool = False):
+    payload = _read_filedoctype(SCHEMA_YAML, RAG_FOLDER)
+    meta, tables_blocks = _normalize_schema_payload(payload)
+    by_table =  _build_table_map(tables_blocks)
+    table = _tab(doctype_name)
+    if deleted or not frappe.db.exists("DocType",doctype_name):
+        by_table.pop(table,None)
+    else:
+        _process_schema_table(table, by_table)
+        block = by_table.get(table)
+        if block:
+            _process_table_for_missing_descriptions(block=block, batch_size=15)
+    _clean_schema_fields(by_table)
+    meta["last_sync"] = str(now_datetime())
+    _write_schema_outputs_incremental(meta, by_table, deleted_table=table if deleted else None)
+    build_table_fvs_job()
+    build_schema_fvs_job()
 
-Table: {table_name}
-
-Rules:
-- Do NOT rename fields.
-- 1 sentence per field.
-- Focus on WHEN/WHY this field is used in business questions.
-- Output ONLY JSON object: {{"field_name": "description"}}
-
-Fields:
-{json.dumps(field_names, ensure_ascii=False)}
-""".strip()
 
 def _call_openai_desc_map_once(client, prompt: str):
     return client.chat.completions.create(
@@ -1025,3 +869,179 @@ def _smart_desc_map_openai(client, table_name: str, fields: List[Dict[str, Any]]
             frappe.logger().error(f"OpenAI error table={table_name} attempt={attempt+1}: {e}")
         time.sleep(2 * (attempt + 1))
     return {}
+
+
+def _upsert_master_data_record(mod:str, doc_name:str):
+    entity_type = f"tab{mod}"
+    file_name = "master_data.yaml"
+    payload = _read_filedoctype(file_name, RAG_FOLDER)
+    meta, data = _normalize_master_data_payload(payload)
+    meta_doc = frappe.get_meta(mod)
+    title_field = meta_doc.title_field or "name"
+    if not frappe.db.exists(mod,doc_name):
+        return
+    fields = ["name"]
+    if title_field != "name":
+        fields.append(title_field)
+    rec = frappe.db.get_value(mod,doc_name,fields,as_dict=True) or {}
+    if mod == "Item":
+        item_code = rec.get("name")
+        item_name = rec.get(title_field) # item_name is title_field and item_code is the name field
+        if not item_code:
+            return
+        filters = [{"field": "item_code", "value": item_code}]
+        if item_name and item_name!=item_code:
+            filters.append({"field": "item_name", "value": item_name})
+        new_row = _build_master_data_row(entity_type, item_code, doc_name, title_field, filters)
+    else:
+        entity_id = rec.get(title_field) if title_field in rec else rec.get("name")
+        if not entity_id:
+            return
+        new_row = _build_master_data_row(entity_type, entity_id, doc_name, title_field, None)
+    data = [
+        row for row in data
+        if not (isinstance(row,dict) and row.get("entity_type")==entity_type and row.get("doc_name") == doc_name)
+    ]
+    data.append(new_row)
+    meta["last_sync"]= str(now_datetime())
+    write_filedoctype(file_name, {"_meta": meta, "data": data}, folder=RAG_FOLDER)
+
+
+
+def _remove_master_data_record(mod:str,doc_name:str):
+    entity_type = f"tab{mod}"
+    file_name = "master_data.yaml"
+    payload = _read_filedoctype(file_name, RAG_FOLDER)
+    meta, data = _normalize_master_data_payload(payload)
+    data = [
+        row for row in data
+        if not(isinstance(row,dict) and row.get("entity_type") == entity_type and row.get("doc_name") == doc_name)
+    ]
+    meta["last_sync"] =str(now_datetime())
+    write_filedoctype(file_name, {"_meta": meta, "data": data}, folder=RAG_FOLDER)
+
+def _schedule_debounced_fvs_rebuild():
+    if frappe.cache().get_value(MASTERDATA_REBUILD_LOCK_KEY):
+        return
+    frappe.cache().set_value(
+        MASTERDATA_REBUILD_LOCK_KEY,
+        "1",
+        expires_in_sec=DEBOUNCE_SEC + 30
+    )
+    frappe.enqueue(
+        "changai.changai.api.v2.auto_gen_api.debounced_rebuild_master_fvs",
+        queue="long",
+        timeout=1800,
+    )
+def debounced_rebuild_master_fvs():
+    time.sleep(DEBOUNCE_SEC)
+    try:
+        build_master_data_fvs_job()
+    finally:
+        frappe.cache().delete_value(MASTERDATA_REBUILD_LOCK_KEY)
+         
+def sync_and_rebuild_masterdata_single(mod:str,doc_name :str,action:str):
+    if action == "delete":
+        _remove_master_data_record(mod, doc_name)
+    else:
+        _upsert_master_data_record(mod,doc_name)
+    _schedule_debounced_fvs_rebuild()
+
+
+@frappe.whitelist()
+def update_masterdata(doc = None,method = None):
+    if not doc:
+        return
+    if method == "on_update" and doc.creation == doc.modified:
+        return
+    mod = doc.doctype # get doctype name
+    if method == "after_delete":
+        meta_doc = frappe.get_meta(mod)
+        frappe.enqueue(
+            "changai.changai.api.v2.auto_gen_api.sync_and_rebuild_masterdata_single",
+            queue="short",
+            timeout=300,
+            mod=mod,
+            doc_name=doc.name,
+            action="delete",
+        )
+    else:
+        frappe.enqueue(
+            "changai.changai.api.v2.auto_gen_api.sync_and_rebuild_masterdata_single",
+            queue="short",
+            timeout=300,
+            mod=mod,
+            doc_name=doc.name,
+            action="upsert",
+        )    
+
+
+
+DEBOUNCE_SEC =30
+MASTERDATA_REBUILD_LOCK_KEY = "changai:masterdata_fvs_rebuild_pending"
+MODULES_TO_SYNC = [ 
+    "Customer",
+    "Supplier",
+    "Item",
+    "Warehouse",
+    "Company",
+    "Account"
+]
+
+
+@frappe.whitelist(allow_guest=False)
+def sync_master_data_smart() -> Dict[str, Any]:
+    file_name = "master_data.yaml"
+    payload = _read_filedoctype(file_name, RAG_FOLDER)
+    meta, data = _normalize_master_data_payload(payload)
+    rebuilt_rows: List[Dict[str, Any]] = []
+    for mod in MODULES_TO_SYNC:
+        entity_type = f"tab{mod}"
+        meta_doc = frappe.get_meta(mod)
+        title_field = meta_doc.title_field or "name"
+        fields = ["name"]
+        if title_field != "name":
+            fields.append(title_field)
+        live_records = frappe.get_all(mod, fields=fields, limit_page_length=0)
+        for rec in live_records:
+            if mod == "Item":
+                item_code = rec.get("name")
+                item_name = rec.get(title_field)
+                if item_code:
+                    filters = [{"field": "item_code", "value": item_code}]
+                    if item_name and item_name != item_code:
+                        filters.append({"field": "item_name", "value": item_name})
+                    rebuilt_rows.append(
+                        _build_master_data_row(entity_type, item_code, rec.get("name"), title_field, filters)
+                    )
+            else:
+                entity_id = rec.get(title_field) if title_field in rec else rec.get("name")
+                rebuilt_rows.append(
+                    _build_master_data_row(entity_type, entity_id, rec.get("name"), title_field, None)
+                )
+    final_data = rebuilt_rows
+    meta["last_sync"] = str(now_datetime())
+    settings = frappe.get_single("ChangAI Settings")
+    settings.last_masterdata_sync = meta["last_sync"]
+    settings.save(ignore_permissions=True)
+    payload_out = {"_meta": meta, "data": final_data}
+    write_filedoctype(file_name, payload_out, folder=RAG_FOLDER)
+
+
+def sync_and_rebuild_masterdata():
+    sync_master_data_smart()
+    # call vector api
+    build_master_data_fvs_job()
+
+
+#run after migrate - single full scan call
+@frappe.whitelist()
+def rebuild_masterdata_after_migrate(doc=None,method=None):
+    try:
+        sync_and_rebuild_masterdata()
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "ChangAI patch: masterdata rebuild failed")
+    try:
+        full_schema_rebuild_job()
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "ChangAI patch: schema rebuild failed")

@@ -118,7 +118,7 @@ app_include_css = [
 # before_install = "changai.setup.install.install_system_deps"
 
 # after_install = "changai.changai.api.v2.install.after_install"
-# after_migrate = "changai.changai.api.v2.install.after_migrate"
+# after_migrate = "changai.changai.api.v2.auto_gen_api.rebuild_masterdata_after_migrate"
 # Uninstallation
 # ------------
 
@@ -169,12 +169,33 @@ app_include_css = [
 # Document Events
 # ---------------
 # Hook on document methods and events
+master_dts_to_sync = ["Customer", "Item", "Supplier", "Warehouse", "Account"]
+schema_dts_to_sync = ["DocType", "Property Setter", "Custom Field"]
+master_dts_events = {
+    dt: {
+        "after_insert": "changai.changai.api.v2.auto_gen_api.update_masterdata",
+        "on_update": "changai.changai.api.v2.auto_gen_api.update_masterdata",
+        "after_delete": "changai.changai.api.v2.auto_gen_api.update_masterdata",
+    }
+    for dt in master_dts_to_sync
+}
+
+schema_dts_events = {
+    dt: {
+        "after_insert": "changai.changai.api.v2.auto_gen_api.schema_sync",
+        "on_update": "changai.changai.api.v2.auto_gen_api.schema_sync",
+        "after_delete": "changai.changai.api.v2.auto_gen_api.schema_sync",
+    }
+    for dt in schema_dts_to_sync
+}
 
 doc_events = {
-"Employee": {
+    "Employee": {
         "on_update": "changai.changai.api.v2.create_qr.create_qr_code",
+    },
+    **master_dts_events,
+    **schema_dts_events,
 
-    }
     # "File":{"after_insert":"changai.changai.api.v2.gdoc_ai.on_file_upload"}
 # # 	"*": {
 # # 		"on_update": "method",
