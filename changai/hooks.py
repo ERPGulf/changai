@@ -175,7 +175,7 @@ master_dts_events = {
     dt: {
         "after_insert": "changai.changai.api.v2.auto_gen_api.update_masterdata",
         "on_update": "changai.changai.api.v2.auto_gen_api.update_masterdata",
-        "after_delete": "changai.changai.api.v2.auto_gen_api.update_masterdata",
+        "on_trash": "changai.changai.api.v2.auto_gen_api.update_masterdata",
     }
     for dt in master_dts_to_sync
 }
@@ -184,7 +184,7 @@ schema_dts_events = {
     dt: {
         "after_insert": "changai.changai.api.v2.auto_gen_api.schema_sync",
         "on_update": "changai.changai.api.v2.auto_gen_api.schema_sync",
-        "after_delete": "changai.changai.api.v2.auto_gen_api.schema_sync",
+        "on_trash": "changai.changai.api.v2.auto_gen_api.schema_sync",
     }
     for dt in schema_dts_to_sync
 }

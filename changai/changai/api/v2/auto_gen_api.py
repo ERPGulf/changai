@@ -11,7 +11,7 @@ from langchain_core.embeddings import Embeddings
 import yaml
 import frappe
 from frappe import _
-from changai.changai.api.v2.build_cards_faiss_index_v2 import build_schema_fvs_job,build_master_data_fvs_job,build_table_fvs_job
+from changai.changai.api.v2.build_cards_faiss_index_v2 import build_schema_fvs_job,build_master_data_fvs_job,build_table_fvs_job,_generate_table_description
 from frappe.utils import now_datetime, add_to_date
 from anthropic import Anthropic
 import openai
@@ -792,8 +792,8 @@ def schema_sync(doc=None,method=None):
     else:
         frappe.enqueue(
         "changai.changai.api.v2.auto_gen_api.sync_schema_single",
-        queue="short",
-        timeout=300,
+        queue="long",
+        timeout =14400,
         doctype_name=doc.name,
         deleted=(method == "after_delete"),
 )
@@ -804,15 +804,19 @@ def _write_schema_outputs_incremental(meta, by_table, deleted_table: Optional[st
     tables_payload = _read_filedoctype(TABLES_JSON, RAG_FOLDER) or []
     tables_payload = [row for row in tables_payload if isinstance(row, dict)]
 
-    if deleted_table:
-        tables_payload = [row for row in tables_payload if row.get("table") != deleted_table]
-    else:
+    valid_tables = set(by_table.keys())
+    tables_payload = [row for row in tables_payload if row.get("table") in valid_tables]
+
+    if not deleted_table:
         for table_name, block in by_table.items():
             existing = next((r for r in tables_payload if r.get("table") == table_name), None)
-            if existing:
+            if existing and block.get("description"):
                 existing["description"] = block.get("description", "")
             else:
-                tables_payload.append({"table": table_name, "description": block.get("description", "")})
+                desc = block.get("description", "") or ""
+                if not desc.strip():
+                    desc = _generate_table_description(table_name)
+                tables_payload.append({"table": table_name, "description": desc})
 
     write_filedoctype(TABLES_JSON, tables_payload, folder=RAG_FOLDER)
 @frappe.whitelist()
@@ -831,9 +835,9 @@ def sync_schema_single(doctype_name: str, deleted: bool = False):
     _clean_schema_fields(by_table)
     meta["last_sync"] = str(now_datetime())
     _write_schema_outputs_incremental(meta, by_table, deleted_table=table if deleted else None)
+    convert_yaml_schema_to_sqlglot_meta()
     build_table_fvs_job()
     build_schema_fvs_job()
-
 
 def _call_openai_desc_map_once(client, prompt: str):
     return client.chat.completions.create(
