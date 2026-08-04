@@ -302,17 +302,13 @@ def _update_or_create_table_block(
     table: str,
     fields: List[Dict[str, Any]],
 ) -> None:
-    if table in by_table:
-        by_table[table]["fields"] = fields
-        by_table[table]["desc_done"] = not _has_pending_descriptions(fields)
-        return
-    by_table[table] = {
-        "table": table,
-        "description": "",
-        "fields": fields,
-        "grain":"",
-        "desc_done": False,
-    }
+    block = by_table.setdefault(table, {})
+    block["table"] = table
+    block.setdefault("description", "")
+    block.setdefault("grain", "")
+    block["fields"] = fields
+    block["desc_done"] = not _has_pending_descriptions(fields)
+
 def _build_field_entry(
     field_meta: Any,
     existing_fields: Dict[str, Dict[str, Any]],
@@ -423,7 +419,6 @@ def _process_schema_table(table: str, by_table: Dict[str, Dict[str, Any]]) -> bo
     existing_fields = _get_existing_fields_for_table(by_table, table)
     fields = _build_fields_from_meta(meta_dt, existing_fields)
     _update_or_create_table_block(by_table, table, fields)
-
     return True
 
 
