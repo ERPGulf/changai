@@ -407,19 +407,20 @@ def _infer_grain_label(meta_dt: Any, table: str) -> str:
 
 
 def _process_schema_table(table: str, by_table: Dict[str, Dict[str, Any]]) -> bool:
-    dt = _strip_tab(table)
-    if not frappe.db.exists("DocType", dt):
-        return False
+	dt = _strip_tab(table)
+	if not frappe.db.exists("DocType", dt):
+		return False
 
-    frappe.clear_cache(doctype=dt)
-    meta_dt = frappe.get_meta(dt)
-    block = by_table.setdefault(table, {})
-    block["is_table"] = bool(meta_dt.istable)
-    block["grain"] = _infer_grain_label(meta_dt, table)
-    existing_fields = _get_existing_fields_for_table(by_table, table)
-    fields = _build_fields_from_meta(meta_dt, existing_fields)
-    _update_or_create_table_block(by_table, table, fields)
-    return True
+	frappe.clear_cache(doctype=dt)
+	meta_dt = frappe.get_meta(dt)
+	block = by_table.setdefault(table, {})
+	block.setdefault("table", table)   # ← insert this first, so "table:" is always the leading key
+	block["is_table"] = bool(meta_dt.istable)
+	block["grain"] = _infer_grain_label(meta_dt, table)
+	existing_fields = _get_existing_fields_for_table(by_table, table)
+	fields = _build_fields_from_meta(meta_dt, existing_fields)
+	_update_or_create_table_block(by_table, table, fields)
+	return True
 
 
 
@@ -790,8 +791,8 @@ def schema_sync(doc=None,method=None):
         queue="long",
         timeout =14400,
         doctype_name=doc.name,
-        deleted=(method == "after_delete"),
-)
+        deleted=(method == "after_delete"),)
+
 def _write_schema_outputs_incremental(meta, by_table, deleted_table: Optional[str] = None):
     ordered_blocks = list(by_table.values())
     write_filedoctype(SCHEMA_YAML, {"_meta": meta, "tables": ordered_blocks}, folder=RAG_FOLDER)
@@ -805,15 +806,18 @@ def _write_schema_outputs_incremental(meta, by_table, deleted_table: Optional[st
     if not deleted_table:
         for table_name, block in by_table.items():
             existing = next((r for r in tables_payload if r.get("table") == table_name), None)
-            if existing and block.get("description"):
-                existing["description"] = block.get("description", "")
+            desc = block.get("description", "") or ""
+            if not desc.strip() and not existing:
+                desc = _generate_table_description(table_name)
+            if existing:
+                if desc.strip():
+                    existing["description"] = desc
+                # else: leave existing row untouched, no description update needed
             else:
-                desc = block.get("description", "") or ""
-                if not desc.strip():
-                    desc = _generate_table_description(table_name)
                 tables_payload.append({"table": table_name, "description": desc})
 
     write_filedoctype(TABLES_JSON, tables_payload, folder=RAG_FOLDER)
+
 @frappe.whitelist()
 def sync_schema_single(doctype_name: str, deleted: bool = False):
     payload = _read_filedoctype(SCHEMA_YAML, RAG_FOLDER)
@@ -925,7 +929,7 @@ def _schedule_debounced_fvs_rebuild():
     frappe.cache().set_value(
         MASTERDATA_REBUILD_LOCK_KEY,
         "1",
-        expires_in_sec=DEBOUNCE_SEC + 30
+        expires_in_sec=DEBOUNCE_SEC + MASTERDATA_REBUILD_LOCK_BUFFER_SEC 
     )
     frappe.enqueue(
         "changai.changai.api.v2.auto_gen_api.debounced_rebuild_master_fvs",
@@ -976,7 +980,8 @@ def update_masterdata(doc = None,method = None):
 
 
 
-DEBOUNCE_SEC =30
+DEBOUNCE_SEC =60
+MASTERDATA_REBUILD_LOCK_BUFFER_SEC  =300
 MASTERDATA_REBUILD_LOCK_KEY = "changai:masterdata_fvs_rebuild_pending"
 MODULES_TO_SYNC = [ 
     "Customer",
