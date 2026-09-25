@@ -2,7 +2,7 @@
 import { ref, reactive, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import ChatbotToggler from './components/ChatbotToggler.vue'
 import ChatbotPopup from './components/ChatbotPopup.vue'
-import { runPipelineCancelable, callSupportBotCancelable, getSettingsDetails } from './utils/frappe.js'
+import { runPipelineCancelable, callSupportBotCancelable, getSettingsDetails, isRealtimeConnected, PIPELINE_TIMEOUT_MS } from './utils/frappe.js'
 import { getOrCreateChatId, getPollyPreference, setPollyPreference } from './utils/session.js'
 import { normalizeBotText, getErrorText, safeStringify } from './utils/helpers.js'
 const showChatbot = ref(false)
@@ -129,7 +129,9 @@ async function handleChatSubmit(message) {
   chatHistory.value.push(thinkingMsg)
   await nextTick()
   scrollToBottom()
+  let receivedUpdate = false
   const onPipelineUpdate = (msg) => {
+  receivedUpdate = true
   const now = Date.now()
   const seconds = ((now - lastStepTime) / 1000).toFixed(2)
   lastStepTime = now
@@ -173,10 +175,18 @@ if (msg.done) {
   const request = runPipelineCancelable(message,chatId, responseMode.value,requestId,sendNonERPtoaiEnabled.value)
   let lastStepTime = Date.now()
   const steps = []
+  // Without realtime the label never changes, so tell the user we are still waiting
+  const slowTimer = setTimeout(() => {
+    if (receivedUpdate || !thinkingMsg.isStatus) return
+    thinkingMsg.text = isRealtimeConnected()
+      ? 'Still working...'
+      : 'Still working... (live progress unavailable)'
+  }, 20000)
   cancelPendingChatRequest.value = () => {
   if (cancelled) return
   cancelled = true
   request.cancel()
+  clearTimeout(slowTimer)
   frappe.realtime.off(eventName, onPipelineUpdate)
   thinkingMsg.isStatus = false
   thinkingMsg.statusType = null
@@ -332,18 +342,24 @@ if (response?.stop_followup) {
   error: errorText,
 })
     console.error('ChangAI API Error:', err)
-    if (err?.code === "ERR_NETWORK_CHANGED" || err?.message?.includes("ERR_NETWORK_CHANGED")){
-    thinkingMsg.isStatus = false
-    thinkingMsg.statusType = null
+    if (err?.code === 'CHANGAI_TIMEOUT') {
+    const minutes = Math.round(PIPELINE_TIMEOUT_MS / 60000)
+    let text = `⚠️ No response from the server after ${minutes} minutes.`
+    if (!isRealtimeConnected()) {
+      text += '\n\nRealtime (socket.io) is not connected on this site, so live progress could not be shown. ' +
+        'Please ask your administrator to check that the socketio process is running and that the reverse proxy forwards /socket.io.'
+    }
+    text += '\n\nIf the answer appears in ChangAI Logs, the request is being held open by a proxy or gateway timeout. Please check the server/proxy timeout settings.'
+    thinkingMsg.text = text
+    }
+    else if (err?.code === "ERR_NETWORK_CHANGED" || err?.message?.includes("ERR_NETWORK_CHANGED")){
     thinkingMsg.text = '⚠️ Network error. Please check your connection and try again.'
-
     }
     else{
-    thinkingMsg.isStatus = false
-    thinkingMsg.statusType = null
-    thinkingMsg.text = '⚠️ Something went wrong. Please try again.'
+    thinkingMsg.text = `⚠️ Something went wrong: ${errorText}`
     }
   } finally {
+  clearTimeout(slowTimer)
   frappe.realtime.off(eventName, onPipelineUpdate)
   if (!cancelled) {
     cancelPendingChatRequest.value = null

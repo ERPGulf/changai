@@ -16391,5 +16391,18 @@
     "parent": "TEXT",
     "parentfield": "TEXT",
     "parenttype": "TEXT"
+  },
+  "tabTesting1": {
+    "testing1_data": "TEXT",
+    "name": "TEXT",
+    "owner": "TEXT",
+    "creation": "TEXT",
+    "modified": "TEXT",
+    "modified_by": "TEXT",
+    "docstatus": "INT",
+    "idx": "INT",
+    "parent": "TEXT",
+    "parentfield": "TEXT",
+    "parenttype": "TEXT"
   }
 }
