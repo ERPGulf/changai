@@ -1,4 +1,5 @@
 const IS_DEV = import.meta.env.DEV
+export const PIPELINE_TIMEOUT_MS = 180000
 
 export const API = {
   PIPELINE: 'changai.changai.api.v2.text2sql_pipeline_v2.run_text2sql_pipeline',
@@ -65,6 +66,7 @@ export function runPipelineCancelable(userQuestion, chatId, mode = 'actual', req
 
   let requestHandle = null
   let settled = false
+  let timeoutId = null
 
   const promise = new Promise((resolve, reject) => {
     requestHandle = window.frappe.call({
@@ -76,14 +78,28 @@ export function runPipelineCancelable(userQuestion, chatId, mode = 'actual', req
         sendNonErptoAI: sendNonErptoAI,
       },
       callback(r) {
+        if (settled) return
         settled = true
+        clearTimeout(timeoutId)
         resolve(r.message)
       },
       error(err) {
+        if (settled) return
         settled = true
-        reject(err)
+        clearTimeout(timeoutId)
+        reject(err ?? new Error('Request failed without a response from the server.'))
       },
     })
+
+    // frappe.call never settles if the connection stays open, so give up after a while
+    timeoutId = setTimeout(() => {
+      if (settled) return
+      settled = true
+      if (requestHandle && typeof requestHandle.abort === 'function') requestHandle.abort()
+      const err = new Error('Request timed out')
+      err.code = 'CHANGAI_TIMEOUT'
+      reject(err)
+    }, PIPELINE_TIMEOUT_MS)
   })
 
   const cancel = () => {
@@ -91,6 +107,7 @@ export function runPipelineCancelable(userQuestion, chatId, mode = 'actual', req
     if (!requestHandle || typeof requestHandle.abort !== 'function') return false
     requestHandle.abort()
     settled = true
+    clearTimeout(timeoutId)
     return true
   }
 
@@ -154,4 +171,8 @@ export function synthesizeTTS(text, voiceId = 'Zayd', mode = 'actual') {
     text,
     voice_id: voiceId,
   }, mode)
+}
+
+export function isRealtimeConnected() {
+  return Boolean(window.frappe?.realtime?.socket?.connected)
 }

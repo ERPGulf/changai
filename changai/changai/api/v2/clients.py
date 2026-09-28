@@ -1,5 +1,6 @@
 import frappe
 import requests
+import httpx
 import json
 import time
 from frappe import _
@@ -11,8 +12,12 @@ from google.api_core import exceptions as google_exceptions
 from changai.changai.api.v2.schema_utils import (ChangAIConfig, CHANGAI_SETTINGS, CHANGAI_GUIDE_LINK, ERPGULF_LINK, get_settings_url)
 _GEMINI_CLIENT = None
 _GEMINI_CONFIG = None
+_GEMINI_IS_VERTEX = False
 APPLICATION_JSON = "application/json"
 MODEL_ID = "gemini-2.5-flash-lite"
+FREE_TIER_MODEL_ID = "gemini-3.5-flash-lite"
+# Without a timeout a stalled Gemini call keeps the chat request open indefinitely
+GEMINI_TIMEOUT_MS = 60000
 STATUS_200 = 200
 
 
@@ -114,15 +119,21 @@ def _get_api_key_client(config):
             title=_("Gemini Authentication Not Configured"),
         )
 
-    return genai.Client(api_key=api_key)
+    return genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
+    )
 
 
 def _build_gemini_client(config):
+    global _GEMINI_IS_VERTEX
     project_id, credentials_json, location = _get_gemini_vertex_config(config)
 
     if project_id or credentials_json or location:
+        _GEMINI_IS_VERTEX = True
         return _build_vertex_gemini_client(project_id, location, credentials_json)
 
+    _GEMINI_IS_VERTEX = False
     return _get_api_key_client(config)
 
 
@@ -143,6 +154,18 @@ def _clean_gemini_response_text(text: str) -> str:
 
 
 def _handle_gemini_api_exception(e: Exception) -> None:
+    if isinstance(e, (httpx.TimeoutException, httpx.ConnectError)):
+        frappe.log_error(frappe.get_traceback(), "Gemini API Connection Error")
+        frappe.throw(
+            _("Could not reach the Gemini API within {0} seconds.<br><br>"
+            "Please check that this server has outbound internet access to <b>generativelanguage.googleapis.com</b> "
+            "(or <b>aiplatform.googleapis.com</b> for Vertex AI) and try again.<br>"
+            "Check ChangAI Quick Start Guide 👇:<br>"
+            "<a href='{1}' target='_blank' rel='noopener noreferrer' style='color: #1e90ff;'>Click here</a><br>"
+            "<a href='{2}' target='_blank' rel='noopener noreferrer' style='color: #1e90ff;'>ERPGulf.com</a></b>."
+).format(GEMINI_TIMEOUT_MS // 1000, CHANGAI_GUIDE_LINK, ERPGULF_LINK),
+            title=_("Gemini API Unreachable"),
+        )
     if isinstance(e, google_exceptions.ResourceExhausted):
         frappe.throw(
             _("Gemini API quota exceeded.<br><br>Please wait and try again or upgrade your plan.<br>Check Quick Start Guide 👇:<br>"
@@ -238,6 +261,7 @@ def _build_vertex_gemini_client(project_id: str, location: str, credentials_json
         project=project_id,
         location=location,
         credentials=creds,
+        http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
     )
 
 
@@ -302,7 +326,7 @@ def call_gemini(prompt: str,sys_prompt: str) -> Union[str, Dict[str, Any]]:
             system_instruction=sys_prompt,
         )
         response = client.models.generate_content(
-            model=MODEL_ID,
+            model=MODEL_ID if _GEMINI_IS_VERTEX else FREE_TIER_MODEL_ID,
             config=gemini_config,
             contents=_build_gemini_contents(prompt),
         )

@@ -12,7 +12,9 @@ export default defineConfig({
   },
   plugins: [vue(), tailwindcss()],
   esbuild: {
-    drop: ['console', 'debugger'],
+    // keep console.error/warn so clients can report real errors
+    drop: ['debugger'],
+    pure: ['console.log', 'console.debug', 'console.info'],
   },
   build: {
     outDir: resolve(__dirname, '../changai/public/dist'),

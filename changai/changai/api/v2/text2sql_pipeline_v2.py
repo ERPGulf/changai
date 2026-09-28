@@ -124,6 +124,59 @@ def get_cud_prompt(cud_type, formatted_q, context):
     raise ValueError(f"Unsupported CUD type: {cud_type}")
 
 
+@frappe.whitelist(allow_guest=True)
+def create_refresh_token( refresh_token):
+        """
+        Create a new access token using a refresh token.
+
+        Args:
+            refresh_token: Refresh token string
+
+        Returns:
+            Response with new token data or error message
+        """
+        url = f"{frappe.local.conf.host_name}/api/method/frappe.integrations.oauth2.get_token"
+
+        payload = f"grant_type=refresh_token&refresh_token={refresh_token}"
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
+        try:
+            response = requests.post(url, headers=headers, data=payload, files=[])
+
+            if response.status_code == 200:
+                try:
+                    message_json = json.loads(response.text)
+                    new_message = {
+                        "access_token": message_json["access_token"],
+                        "expires_in": message_json["expires_in"],
+                        "token_type": message_json["token_type"],
+                        "scope": message_json["scope"],
+                        "refresh_token": message_json["refresh_token"],
+                    }
+
+                    return Response(
+                        json.dumps({"data": new_message}),
+                        status=200,
+                        mimetype="application/json",
+                    )
+                except json.JSONDecodeError as e:
+                    return Response(
+                        json.dumps({"data": f"Error decoding JSON: {e}"}),
+                        status=401,
+                        mimetype="application/json",
+                    )
+            else:
+                return Response(
+                    json.dumps({"data": response.text}),
+                    status=401,
+                    mimetype="application/json"
+                )
+        except Exception as e:
+            return Response(
+                json.dumps({"data": f"Error: {str(e)}"}),
+                status=500,
+                mimetype="application/json"
+            )
 
 @frappe.whitelist(allow_guest=True)  # nosemgrep: security.guest-whitelisted-method - intentional, validates credentials via OAuth client lookup and Frappe password grant before returning a token
 def generate_token_secure(api_key: str, api_secret: str, app_key: str):

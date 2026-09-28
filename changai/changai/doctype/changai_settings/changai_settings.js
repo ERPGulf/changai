@@ -199,7 +199,7 @@ frappe.ui.form.on("ChangAI Settings", {
 
     update_schema_file(frm) {
         frappe.call({
-            method: "changai.changai.api.v2.auto_gen_api.sync_schema_and_enqueue_descriptions",
+            method: "changai.changai.api.v2.auto_gen_api.schema_sync",
             freeze: true,
             freeze_message: "Syncing schema...",
             callback(r) {
