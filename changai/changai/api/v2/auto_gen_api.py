@@ -20,7 +20,7 @@ from pathlib import Path
 from changai.changai.api.v2.schema_utils import convert_yaml_schema_to_sqlglot_meta
 from frappe.utils.file_manager import get_file
 from changai.changai.api.v2.text2sql_pipeline_v2 import call_gemini
-from changai.changai.api.v2.train_data_api import _get_openai_client
+from changai.changai.api.v2.train_data_api import _get_claude_model, _get_openai_client
 JSON_EXT = ".json"
 SCHEMA_YAML = "schema.yaml"
 YAML_EXT = ".yaml"
@@ -629,7 +629,7 @@ def _normalize_desc_map(parsed: Any) -> Dict[str, str]:
 
 def _call_claude_desc_map_once(client: Anthropic, prompt: str) -> Any:
     return client.messages.create(
-        model="claude-sonnet-4-5",
+        model=_get_claude_model(),
         max_tokens=500,
         temperature=0.2,
         system="Return ONLY a JSON object. No markdown. No extra text.",

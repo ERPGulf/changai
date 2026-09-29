@@ -56,7 +56,58 @@ def _get_claude_client():
             title=_("Missing Claude API Key")
         )
 
-    return anthropic.Anthropic(api_key=api_key)
+    # Build client kwargs — base URL + optional extra headers
+    # default_base_url is "" so the official SDK uses its built-in default
+    # (https://api.anthropic.com). When the operator sets a custom URL,
+    # it is passed through unchanged.
+    client_kwargs = {"api_key": api_key}
+
+    base_url = ""
+    try:
+        base_url = (settings.anthropic_base_url or "").strip()
+    except Exception:
+        base_url = ""
+    if base_url:
+        client_kwargs["base_url"] = base_url
+
+    extra_headers_raw = ""
+    try:
+        extra_headers_raw = (settings.claude_extra_headers or "").strip()
+    except Exception:
+        extra_headers_raw = ""
+    if extra_headers_raw:
+        try:
+            parsed_headers = json.loads(extra_headers_raw)
+            if isinstance(parsed_headers, dict) and parsed_headers:
+                client_kwargs["default_headers"] = parsed_headers
+        except (ValueError, TypeError):
+            frappe.log_error(
+                title="ChangAI: invalid Claude extra headers JSON",
+                message=(
+                    "claude_extra_headers must be a valid JSON object "
+                    "of HTTP headers. Ignoring the value."
+                ),
+            )
+
+    return anthropic.Anthropic(**client_kwargs)
+
+
+def _get_claude_model() -> str:
+    """Return the Claude model name from ChangAI Settings, falling back to the
+    historical hard-coded default if the field is missing or unset.
+
+    Operators pointing ChangAI at a non-Anthropic backend (e.g. a self-hosted
+    Anthropic-compatible router) can override this via the
+    ``claude_model`` field on ChangAI Settings.
+    """
+    try:
+        settings = frappe.get_single(CHANGAI_SETTINGS)
+        model = (getattr(settings, "claude_model", None) or "").strip()
+        if model:
+            return model
+    except Exception:
+        pass
+    return "claude-sonnet-4-6"
 
 
 def _get_openai_client():
@@ -322,7 +373,7 @@ def _build_claude_messages(module_name, module_description) -> List[dict]:
 def _call_claude_batch_once(client, messages: List[dict]) -> str:
     try:
         resp = client.messages.create(
-            model="claude-sonnet-4-6",
+            model=_get_claude_model(),
             max_tokens=4096,
             temperature=1.0,
             system=f"{VALID_OUTPUT_MESSAGE}\nStart with '[' and end with ']'. No markdown. No code fences. No explanation.",
