@@ -202,74 +202,39 @@ MASTER_DOCTYPES = [
 ]
 
 
-def is_doctype_schema_changed(doc, last_sync):
+def is_schema_changed(last_sync) -> bool:
+    # One MAX(modified) per source table instead of three queries per DocType
     from frappe.utils import get_datetime
 
-    doctype_modified = frappe.db.get_value("DocType", doc, "modified")
-
-    custom_field_modified = frappe.db.sql(
-        "SELECT MAX(modified) FROM `tabCustom Field` WHERE dt = %s",
-        doc
-    )[0][0]
-
-    property_setter_modified = frappe.db.sql(
-        "SELECT MAX(modified) FROM `tabProperty Setter` WHERE doc_type = %s",
-        doc
-    )[0][0]
-
-    candidates = [
-        get_datetime(d) for d in [
-            doctype_modified,
-            custom_field_modified,
-            property_setter_modified
-        ] if d
+    latest = [
+        frappe.db.sql(f"SELECT MAX(modified) FROM `{table}`")[0][0]
+        for table in ("tabDocType", "tabCustom Field", "tabProperty Setter")
     ]
+    latest = [get_datetime(d) for d in latest if d]
+    return bool(latest and max(latest) > get_datetime(last_sync))
 
-    latest = max(candidates, default=None)
-    return bool(latest and last_sync and latest > get_datetime(last_sync))
 
-def is_master_data_changed(last_sync: str, stored_data: list):
-    for doc in MASTER_DOCTYPES:
-        meta = frappe.get_meta(doc)
-        title_field = meta.title_field or "name"
-        entity_type = f"tab{doc}"
-        allowed_fields = [f.fieldname for f in meta.fields] + ["name"]
-        if title_field not in allowed_fields:
-            frappe.log_error(f"Invalid title_field: {title_field}", "is_master_data_changed")
-            continue
-        stored_titles = set()
-        for row in stored_data:
-            if (row.get("entity_type") != entity_type):
-                continue
-            filters = row.get("filters")
-            if isinstance(filters, dict):
-                filters = [filters]
-            elif not isinstance(filters, list):
-                filters = []
-            for f in filters:
-                if (
-                    isinstance(f, dict)
-                    and f.get("field") == title_field
-                    and f.get("value")
-                ):
-                    stored_titles.add(f.get("value"))
-        live_records = frappe.get_all(
-            doc,
-            fields=[title_field],
-            limit_page_length=0
-        )
-        live_titles = set()
-        for rec in live_records:
-            if rec.get(title_field):
-                live_titles.add(rec.get(title_field))
-        if stored_titles == live_titles:
-            return False
-        if stored_titles != live_titles:
+def is_master_data_changed(last_sync, stored_data: list) -> bool:
+    # Stale if any master record changed after the last sync (insert/update) or the record
+    # count no longer matches what's stored (delete). Checks every DocType, not just the first.
+    from frappe.utils import get_datetime
+
+    stored_counts = {}
+    for row in stored_data:
+        entity_type = row.get("entity_type") if isinstance(row, dict) else None
+        stored_counts[entity_type] = stored_counts.get(entity_type, 0) + 1
+    for doctype in MASTER_DOCTYPES:
+        latest = frappe.db.sql(f"SELECT MAX(modified) FROM `tab{doctype}`")[0][0]
+        if latest and get_datetime(latest) > get_datetime(last_sync):
+            return True
+        if frappe.db.count(doctype) != stored_counts.get(f"tab{doctype}", 0):
             return True
     return False
 
 @frappe.whitelist(allow_guest=False)
 def check_file_updates(file_name: str):
+    # Only the ChangAI Settings form uses this (sync status badges)
+    frappe.has_permission(CHANGAI_SETTINGS, "read", throw=True)
     RAG_FOLDER = "Home/RAG Sources"
     from changai.changai.api.v2.build_cards_faiss_index_v2 import _read_file_doc
     settings = frappe.get_single("ChangAI Settings")
@@ -292,11 +257,7 @@ def check_file_updates(file_name: str):
     changed = False
 
     if file_name == "schema.yaml":
-        doctypes = frappe.db.get_all("DocType", {"istable": 0}, pluck="name")
-        for doc in doctypes:
-            if is_doctype_schema_changed(doc, last_sync):
-                changed = True
-                break
+        changed = is_schema_changed(last_sync)
 
     elif file_name == "master_data.yaml":
         raw_content = _read_file_doc("master_data.yaml", RAG_FOLDER)
@@ -310,8 +271,7 @@ def check_file_updates(file_name: str):
             stored_data = parsed.get("data", []) if isinstance(parsed, dict) else []
         else:
             stored_data = []
-        if is_master_data_changed(last_sync, stored_data):
-            changed = True
+        changed = is_master_data_changed(last_sync, stored_data)
 
     days = days_diff(today(), getdate(last_sync))
 
@@ -572,7 +532,7 @@ def _get_internal_settings_config() -> Dict[str, Any]:
         "RETAIN_MEM": settings.retain_memory,
         "LLM_VERSION_ID": settings.llm_version_id,
         "EMBED_VERSION_ID": settings.embedder_version_id,
-        "API_TOKEN": settings.api_token,
+        "API_TOKEN": settings.get_password("api_token", raise_exception=False),
         "REMOTE": bool(settings.remote),
         "deploy_url": settings.deploy_url,
         "entity_retriever": settings.entity_retriever,
@@ -584,19 +544,20 @@ def _get_internal_settings_config() -> Dict[str, Any]:
         "gemini_project_id": settings.gemini_project_id,
         "gemini_json_content": settings.gemini_json_content,
         "aws_access_key_id": settings.aws_access_key_id,
-        "aws_secret_access_key": settings.aws_secret_access_key,
+        "aws_secret_access_key": settings.get_password("aws_secret_access_key", raise_exception=False),
+        "gemini_api_key": settings.get_password("gemini_api_key", raise_exception=False),
         "enable_voice_chat": settings.enable_voice_chat,
     }
     return config
 
-@frappe.whitelist(allow_guest=False)
 def get_settings() -> Dict[str, Any]:
+    # Not whitelisted: the config holds decrypted API keys
     frappe.has_permission(CHANGAI_SETTINGS, "read", throw=True)
     return _get_internal_settings_config()
 
 @frappe.whitelist(allow_guest=False)
 def get_frontend_settings() -> Dict[str, Any]:
-    frappe.has_permission(CHANGAI_SETTINGS, "read", throw=True)
+    # No ChangAI Settings permission needed: returns only on/off flags, and every chat user needs them
     return _build_frontend_settings_config()
 
 def clean_sql(s: Any) -> str:

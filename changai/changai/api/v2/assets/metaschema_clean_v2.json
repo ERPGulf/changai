@@ -5283,6 +5283,19 @@
     "parentfield": "TEXT",
     "parenttype": "TEXT"
   },
+  "tabHyrin": {
+    "test_field": "TEXT",
+    "name": "TEXT",
+    "owner": "TEXT",
+    "creation": "TEXT",
+    "modified": "TEXT",
+    "modified_by": "TEXT",
+    "docstatus": "INT",
+    "idx": "INT",
+    "parent": "TEXT",
+    "parentfield": "TEXT",
+    "parenttype": "TEXT"
+  },
   "tabIMAP Folder": {
     "folder_name": "TEXT",
     "append_to": "TEXT",
@@ -14645,6 +14658,19 @@
     "parentfield": "TEXT",
     "parenttype": "TEXT"
   },
+  "tabTesting1": {
+    "testing1_data": "TEXT",
+    "name": "TEXT",
+    "owner": "TEXT",
+    "creation": "TEXT",
+    "modified": "TEXT",
+    "modified_by": "TEXT",
+    "docstatus": "INT",
+    "idx": "INT",
+    "parent": "TEXT",
+    "parentfield": "TEXT",
+    "parenttype": "TEXT"
+  },
   "tabTimesheet": {
     "title": "TEXT",
     "naming_series": "TEXT",
@@ -16381,19 +16407,6 @@
     "hours": "TEXT",
     "end_time": "TEXT",
     "enabled": "TEXT",
-    "name": "TEXT",
-    "owner": "TEXT",
-    "creation": "TEXT",
-    "modified": "TEXT",
-    "modified_by": "TEXT",
-    "docstatus": "INT",
-    "idx": "INT",
-    "parent": "TEXT",
-    "parentfield": "TEXT",
-    "parenttype": "TEXT"
-  },
-  "tabTesting1": {
-    "testing1_data": "TEXT",
     "name": "TEXT",
     "owner": "TEXT",
     "creation": "TEXT",

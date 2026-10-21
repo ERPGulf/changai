@@ -101,7 +101,7 @@
    "fieldname": "llm",
    "fieldtype": "Select",
    "label": "LLM",
-   "options": "QWEN3\nGemini"
+   "options": "QWEN3\nGemini\nClaude"
   },
   {
    "fieldname": "column_break_irkb",
@@ -190,7 +190,7 @@
   },
   {
    "fieldname": "api_token",
-   "fieldtype": "Data",
+   "fieldtype": "Password",
    "label": "Replicate API token"
   },
   {
@@ -210,12 +210,12 @@
   },
   {
    "fieldname": "openai_api_key",
-   "fieldtype": "Data",
+   "fieldtype": "Password",
    "label": "OpenAI API key"
   },
   {
    "fieldname": "claude_api_key",
-   "fieldtype": "Data",
+   "fieldtype": "Password",
    "label": "Claude API Key"
   },
   {
@@ -290,7 +290,7 @@
   },
   {
    "fieldname": "gemini_api_key",
-   "fieldtype": "Data",
+   "fieldtype": "Password",
    "label": "Gemini api key"
   },
   {
@@ -319,7 +319,7 @@
   {
    "depends_on": "eval:doc.tts_provider == \"polly\" && doc.enable_voice_chat == 1",
    "fieldname": "aws_secret_access_key",
-   "fieldtype": "Data",
+   "fieldtype": "Password",
    "label": "AWS secret access key "
   },
   {
@@ -408,7 +408,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-06-24 13:36:59.025672",
+ "modified": "2026-10-21 11:49:40.598704",
  "modified_by": "Administrator",
  "module": "Changai",
  "name": "ChangAI Settings",

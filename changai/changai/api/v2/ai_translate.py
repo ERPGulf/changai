@@ -19,7 +19,7 @@ def get_claude_client():
     global _CLAUDE_CLIENT, _CLAUDE_API_KEY
 
     settings = get_settings()
-    api_key = (getattr(settings, "claude_api_key", None) or "").strip()
+    api_key = (settings.get_password("claude_api_key", raise_exception=False) or "").strip()
 
     if not api_key:
         api_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
@@ -56,7 +56,7 @@ def translate_and_store(docname: str, doctype: str, from_field: str, to_field: s
         frappe.throw(_("No text to translate"))
     settings = get_settings()
     try:
-        api_key = settings.claude_api_key
+        api_key = settings.get_password("claude_api_key", raise_exception=False)
     except Exception:
         api_key = None
     if not api_key:

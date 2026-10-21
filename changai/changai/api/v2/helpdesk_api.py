@@ -4,7 +4,7 @@ from werkzeug.wrappers import Response
 from typing import Any, Optional, Dict
 import json
 from changai.changai.api.v2.schema_utils import read_asset
-from changai.changai.api.v2.clients import call_gemini
+from changai.changai.api.v2.clients import call_model
 from changai.changai.api.v2.rate_limit import enforce_user_rate_limit
 
 SUPPORT_PROMPT = read_asset("support.txt", base="prompts")
@@ -143,7 +143,7 @@ def support_bot(message: str) -> Dict[str, Any]:
     user_email = frappe.session.user
     full_name = frappe.get_value("User", frappe.session.user, "full_name")
     prompt = SUPPORT_USER_PROMPT.format(user_message=message)
-    raw = call_gemini(prompt, SUPPORT_SYS_PROMPT)
+    raw = call_model(prompt, sys_prompt=SUPPORT_SYS_PROMPT)
     output = json.loads(raw)
     task_flag = (output.get("task_flag") or "UNKNOWN").strip()
     ticket_id = output.get("ticket_id")

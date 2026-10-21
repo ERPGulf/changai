@@ -41,7 +41,7 @@ _field_cache: Dict[str, set] = {}
 def _get_claude_client():
     settings = frappe.get_single(CHANGAI_SETTINGS)
     try:
-        api_key = settings.claude_api_key
+        api_key = settings.get_password("claude_api_key", raise_exception=False)
     except Exception:
         api_key = None
 
@@ -62,7 +62,7 @@ def _get_claude_client():
 def _get_openai_client():
     settings = frappe.get_single(CHANGAI_SETTINGS)
     try:
-        api_key = settings.openai_api_key
+        api_key = settings.get_password("openai_api_key", raise_exception=False)
     except Exception:
         api_key = None
 

@@ -162,7 +162,7 @@ def build_table_docs(table_list: List[str]) -> List[Document]:
         ))
     return docs
 
-from changai.changai.api.v2.clients import call_gemini
+from changai.changai.api.v2.clients import call_model
 def _generate_table_description(table_name: str):
     SYSTEM_PROMPT = """You are a database documentation assistant for an ERPNext semantic search system. ERPNext is a well-known open-source ERP application with a fixed, well-documented set of DocTypes. Your job is to write short, accurate, plain-language descriptions of ERPNext database tables so that an embedding model can match user questions to the correct table.
 
@@ -184,7 +184,7 @@ Write the description now.
 Output format: plain text, one sentence only — no quotes, no labels, no preamble, nothing else."""
 
     try:
-        response = call_gemini(USER_PROMPT, SYSTEM_PROMPT)
+        response = call_model(USER_PROMPT, sys_prompt=SYSTEM_PROMPT)
         return response
     except Exception:
         frappe.log_error(frappe.get_traceback(), f"Gemini description generation failed: {table_name}")

@@ -29,7 +29,6 @@ from rapidfuzz import fuzz, process
 from langgraph.checkpoint.memory import MemorySaver
 from changai.changai.api.v2.schema_utils import (
     validate_sql_schema,
-    check_file_updates,
     read_asset,
     clean_sql,
     validate_sql_against_mapping,
@@ -64,7 +63,6 @@ from frappe import _
 from frappe.desk.query_report import get_script
 from changai.changai.api.v2.clients import (
     call_model,
-    call_gemini,
     remote_embedder_request,
 )
 STATUS_200 = 200
@@ -259,19 +257,6 @@ def whoami() -> Dict[str, Any]:
     except ValueError as ve:
         frappe.throw(_("{0}\n Check Quick Start Guide Here 👇:\n {1}").format(str(ve),CHANGAI_GUIDE_LINK))
 
-
-def extract_tables_from_sql(sql: str) -> List[str]:
-    """Extract all table names from a SQL query."""
-    if not sql:
-        return []
-    matches = re.findall(r'`(tab[^`]+)`', sql, re.IGNORECASE)
-    seen = set()
-    tables = []
-    for t in matches:
-        if t not in seen:
-            seen.add(t)
-            tables.append(t)
-    return tables
 
 def _safe_strip(v):
     if v is None:
@@ -555,7 +540,8 @@ def create_entity(state:SQLState):
     "Detecting doctype for creation",
     "Detecting doctype for creation",
     done=True)
-    res = call_gemini(prompt,"")
+    res = call_model(prompt, sys_prompt="")
+
     try:
         if isinstance(res, str):
             res = res.replace("```json", "").replace("```", "").strip()
@@ -589,32 +575,7 @@ def get_payload(prompt:str,user_prompt:str,state:SQLState):
 
 
 
-def check_update(res:dict):
-    if not res.get("data"):
-        frappe.throw(_(
-            "Master Data does not exist. Because of this, results may not be accurate. "
-            "For better accuracy, please open "
-            "<a href='{0}' target='_blank' rel='noopener noreferrer' style='color:#1e90ff;'>Go to Settings Page</a> "
-            "and click on the <b>Update Master Data</b> button in the Training tab.<br><br>"
-            "Check Quick Start Guide Here 👇:<br>"
-            "<a href='{1}' target='_blank' rel='noopener noreferrer' style='color: #1e90ff;'>Click here</a><br>"
-            "<a href='{2}' target='_blank' rel='noopener noreferrer' style='color:#1e90ff;'>ERPGulf.com</a>"
-        ).format(get_settings_url(), CHANGAI_GUIDE_LINK, ERPGULF_LINK))
-
-    if res.get("is_stale"):
-        frappe.throw(_(
-            "Master Data not updated."
-            "Because of this, results may not be accurate. "
-            "For better accuracy, please open "
-            "<a href='{1}' target='_blank' rel='noopener noreferrer' style='color:#1e90ff;'>Go to Settings Page</a> "
-            "and click on the <b>Update Master Data</b> button in the Training tab.<br><br>"
-            "Check Quick Start Guide Here 👇:<br>"
-            "<a href='{2}' target='_blank' rel='noopener noreferrer' style='color: #1e90ff;'>Click here</a><br>"
-            "<a href='{3}' target='_blank' rel='noopener noreferrer' style='color:#1e90ff;'>ERPGulf.com</a>"
-        ).format(res.get("days"), get_settings_url(), CHANGAI_GUIDE_LINK, ERPGULF_LINK))
-
 def generate_orm(state: SQLState) -> SQLState:
-    from changai.changai.api.v2.auto_gen_api import update_masterdata
     attempt  = 0
     MAX_TRIES = 4
     payload = {}
@@ -852,8 +813,12 @@ def detect_specific_entities(state: SQLState) -> SQLState:
         }
 
     try:
-        res = check_file_updates("master_data.yaml")
-        check_update(res)
+        # Master data is kept current by doc hooks + a daily full sync, so no per-question staleness
+        # check. If it was never built, start a build and answer without entity cards meanwhile.
+        if not frappe.db.get_single_value("ChangAI Settings", "last_masterdata_sync"):
+            from changai.changai.api.v2.auto_gen_api import schedule_masterdata_full_sync
+            schedule_masterdata_full_sync()
+            return {**state, "entity_cards": [], "entity_raw": None}
         out = call_entity_retriever(False, q, state)
         return {
             **state,
@@ -876,7 +841,7 @@ Answer the question clearly and helpfully.
 Always mention that you are ChangAI by ERPGulf when introducing yourself."""
     if frappe.utils.cint(state.get("sendNonErptoAI", 0)) == 1 or state.get("sendNonErptoAI") == "true":
         try:
-            res = call_gemini(question,sys_prompt)
+            res = call_model(question, sys_prompt=sys_prompt)
             return {**state, "non_erp_res": res}
         # except ValidationError as ve:
         #     return {**state,"error":str(ve)}
@@ -1012,16 +977,6 @@ workflow.add_edge("generate_sql",END)
 workflow.add_edge("generate_orm",END)
 checkpointer=MemorySaver()
 app=workflow.compile(checkpointer=checkpointer)
-def _build_match_conditions(doctypes: List[str]) -> str:
-    conditions = []
-    for t in doctypes:
-        doctype = t[3:] if t.startswith("tab") else t
-        cond = build_match_conditions(doctype)
-        if cond:
-            conditions.append(cond)
-    return " AND ".join(conditions) if conditions else ""
-
-
 def _parse_select(sql: str) -> Optional[exp.Expression]:
     # Raw SQL is read-only; create/update/delete go through generate_orm with Frappe permissions.
     # Parsed rather than startswith("select") so "SELECT 1; DELETE ..." is rejected and WITH ... SELECT is allowed.
@@ -1034,20 +989,96 @@ def _parse_select(sql: str) -> Optional[exp.Expression]:
     return statements[0]
 
 
-def _append_conditions(statement: exp.Expression, combined: str) -> str:
-    # Parse instead of string-appending so the filter lands before ORDER BY/LIMIT
-    # and an existing OR in the WHERE can't bypass it (sqlglot parenthesises both sides).
-    if not isinstance(statement, exp.Select):
-        # Can't place the filter safely (e.g. UNION); fail closed for restricted users.
-        raise frappe.PermissionError
-    try:
-        condition = sqlglot.condition(combined, dialect="mysql")
-    except sqlglot.errors.ParseError:
-        raise frappe.PermissionError
-    return statement.where(condition, append=True).sql(dialect="mysql")
+def _table_doctypes(statement: exp.Expression) -> List[Tuple[exp.Table, str]]:
+    """Map every table in the query to its DocType, or raise PermissionError.
+
+    Only real (non-single) DocType tables are allowed, so system tables such as __Auth,
+    tabSingles, information_schema or another database can never be read from chat.
+    """
+    cte_names = {cte.alias_or_name for cte in statement.find_all(exp.CTE)}
+    tables = []
+    for table in statement.find_all(exp.Table):
+        name = table.name
+        if name in cte_names and not table.db:
+            continue
+        if not name or table.db or table.catalog or not name.startswith("tab"):
+            raise frappe.PermissionError
+        doctype = name[3:]
+        if not frappe.db.exists("DocType", doctype) or frappe.get_meta(doctype).issingle:
+            raise frappe.PermissionError
+        tables.append((table, doctype))
+    return tables
 
 
-def execute_query(sql: str, doctypes: List[str]) -> Any:
+def _child_table_condition(child: str) -> Optional[str]:
+    # Child tables have no permissions of their own: limit rows to parents the user can read,
+    # applying each parent's User Permission filter.
+    parents = set(frappe.get_all("DocField", filters={"options": child, "fieldtype": ["in", ["Table", "Table MultiSelect"]]}, pluck="parent"))
+    parents |= set(frappe.get_all("Custom Field", filters={"options": child, "fieldtype": ["in", ["Table", "Table MultiSelect"]]}, pluck="dt"))
+    readable = [p for p in sorted(parents) if frappe.has_permission(p, "read")]
+    if not readable:
+        raise frappe.PermissionError
+    if len(readable) == len(parents) and not any(build_match_conditions(p) for p in readable if not frappe.get_meta(p).issingle):
+        return None
+    parts = []
+    for parent in readable:
+        clause = f"`tab{child}`.`parenttype` = {frappe.db.escape(parent)}"
+        cond = "" if frappe.get_meta(parent).issingle else build_match_conditions(parent)
+        if cond:
+            clause += f" AND `tab{child}`.`parent` IN (SELECT `name` FROM `tab{parent}` WHERE {cond})"
+        parts.append(f"({clause})")
+    return " OR ".join(parts)
+
+
+def _check_field_permissions(statement: exp.Expression, doctypes: set) -> None:
+    # Raw SQL skips Frappe's field-level (permlevel) rules, so refuse queries that touch fields
+    # the user can't read, or SELECT * on a DocType that has any such field.
+    hidden = set()
+    for doctype in doctypes:
+        meta = frappe.get_meta(doctype)
+        parenttype = None
+        if meta.istable:
+            parenttype = frappe.db.get_value("DocField", {"options": doctype, "fieldtype": ["in", ["Table", "Table MultiSelect"]]}, "parent")
+        allowed_levels = meta.get_permlevel_access("read", parenttype)
+        hidden |= {df.fieldname for df in meta.fields if df.permlevel and df.permlevel not in allowed_levels}
+    if not hidden:
+        return
+    for select in statement.find_all(exp.Select):
+        for projection in select.expressions:
+            if isinstance(projection, exp.Star) or (isinstance(projection, exp.Column) and isinstance(projection.this, exp.Star)):
+                raise frappe.PermissionError
+    if any(col.name in hidden for col in statement.find_all(exp.Column)):
+        raise frappe.PermissionError
+
+
+def _apply_permissions(statement: exp.Expression) -> exp.Expression:
+    """Check read access on every table and swap each one for a filtered derived table.
+
+    `tabX` alias -> (SELECT * FROM `tabX` WHERE <match conditions>) alias, so User Permission
+    filters apply wherever the table appears (joins, subqueries, CTEs, UNIONs, any alias)
+    and an OR in the user's WHERE clause can't bypass them.
+    """
+    tables = _table_doctypes(statement)
+    doctypes = {doctype for _, doctype in tables}
+    conditions = {}
+    for doctype in doctypes:
+        if frappe.get_meta(doctype).istable:
+            conditions[doctype] = _child_table_condition(doctype)
+        else:
+            # Raises PermissionError if the user can't read the DocType at all
+            conditions[doctype] = build_match_conditions(doctype) or None
+    _check_field_permissions(statement, doctypes)
+    for table, doctype in tables:
+        condition = conditions[doctype]
+        if not condition:
+            continue
+        filtered = sqlglot.parse_one(f"SELECT * FROM `tab{doctype}` WHERE {condition}", read="mysql")
+        alias = table.alias or table.name
+        table.replace(exp.Subquery(this=filtered, alias=exp.TableAlias(this=exp.to_identifier(alias, quoted=True))))
+    return statement
+
+
+def execute_query(sql: str) -> Any:
     try:
         if not sql:
             return []
@@ -1055,9 +1086,7 @@ def execute_query(sql: str, doctypes: List[str]) -> Any:
         statement = _parse_select(sql)
         if statement is None:
             return {"error": _("Only SELECT queries are allowed. Check Quick Start Guide Here 👇:\n {0}").format(CHANGAI_GUIDE_LINK)}
-        combined = _build_match_conditions(doctypes)
-        if combined:
-            sql = _append_conditions(statement, combined)
+        sql = _apply_permissions(statement).sql(dialect="mysql")
         return frappe.db.sql(sql, as_dict=True)
     except frappe.PermissionError:
         return {
@@ -1137,7 +1166,6 @@ def _handle_sql_result(
     fields = fields or ""
     formatted_q = formatted_q or user_question
     sql_result=[]
-    extracted_tables=[]
     formatted_result =""
     payload = {}
     source =""
@@ -1181,11 +1209,9 @@ def _handle_sql_result(
         payload = final.get("payload") or {}
         payload_res = final.get("payload_res")
         table = final.get("table")
-        if org_sql:
-            extracted_tables = extract_tables_from_sql(org_sql)
         try:
             if sql:
-                sql_result = execute_query(sql, extracted_tables)
+                sql_result = execute_query(sql)
                 if source == "gdoc":
                     return {
                         "sql_out":sql_result,
@@ -1338,7 +1364,7 @@ def retry_sql(sql, error, formatted_q, sql_prompt,source="erp"):
     retry_prompt = base + RETRY_PROMPT
     user_prompt = sql_prompt + RETRY_USER_PROMPT.format(sql=sql,error=error,formatted_q=formatted_q)
     try:
-        rewritten = call_gemini(user_prompt, sys_prompt=retry_prompt)
+        rewritten = call_model(user_prompt, sys_prompt=retry_prompt)
         rewritten_json = json.loads(rewritten)
         retried_sql = clean_sql(rewritten_json.get("sql") or "")
         retried_orm = clean_sql(rewritten_json.get("orm") or "")

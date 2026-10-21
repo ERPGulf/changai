@@ -19,7 +19,7 @@ import math
 from pathlib import Path
 from changai.changai.api.v2.schema_utils import convert_yaml_schema_to_sqlglot_meta
 from frappe.utils.file_manager import get_file
-from changai.changai.api.v2.text2sql_pipeline_v2 import call_gemini
+from changai.changai.api.v2.clients import call_model
 from changai.changai.api.v2.train_data_api import _get_openai_client
 JSON_EXT = ".json"
 SCHEMA_YAML = "schema.yaml"
@@ -744,7 +744,7 @@ def _smart_desc_map_gemini(table_name: str, fields: List[Dict[str, Any]]) -> Dic
     system_prompt = "Return ONLY a valid JSON object. No markdown. No extra text."
     for attempt in range(3):
         try:
-            response = call_gemini(prompt, system_prompt)
+            response = call_model(prompt, sys_prompt=system_prompt)
             text = (response or "").strip()
             parsed = _extract_json_object(text)
             normalized = _normalize_desc_map(parsed)
@@ -773,66 +773,6 @@ def _schedule_full_schema_rebuild():
         queue="long",
         timeout=14400,
     )
-
-@frappe.whitelist()
-def schema_sync(doc=None,method=None):
-    if method == "on_update" and doc and doc.creation == doc.modified:
-        return
-    if not doc:
-        return
-    if frappe.flags.in_migrate or frappe.flags.in_install:
-        return _schedule_full_schema_rebuild()
-    else:
-        frappe.enqueue(
-        "changai.changai.api.v2.auto_gen_api.sync_schema_single",
-        queue="long",
-        timeout =14400,
-        doctype_name=doc.name,
-        deleted=(method == "after_delete"),)
-
-def _write_schema_outputs_incremental(meta, by_table, deleted_table: Optional[str] = None):
-    ordered_blocks = list(by_table.values())
-    write_filedoctype(SCHEMA_YAML, {"_meta": meta, "tables": ordered_blocks}, folder=RAG_FOLDER)
-
-    tables_payload = _read_filedoctype(TABLES_JSON, RAG_FOLDER) or []
-    tables_payload = [row for row in tables_payload if isinstance(row, dict)]
-
-    valid_tables = set(by_table.keys())
-    tables_payload = [row for row in tables_payload if row.get("table") in valid_tables]
-
-    if not deleted_table:
-        for table_name, block in by_table.items():
-            existing = next((r for r in tables_payload if r.get("table") == table_name), None)
-            desc = block.get("description", "") or ""
-            if not desc.strip() and not existing:
-                desc = _generate_table_description(table_name)
-            if existing:
-                if desc.strip():
-                    existing["description"] = desc
-                # else: leave existing row untouched, no description update needed
-            else:
-                tables_payload.append({"table": table_name, "description": desc})
-
-    write_filedoctype(TABLES_JSON, tables_payload, folder=RAG_FOLDER)
-
-def sync_schema_single(doctype_name: str, deleted: bool = False):
-    payload = _read_filedoctype(SCHEMA_YAML, RAG_FOLDER)
-    meta, tables_blocks = _normalize_schema_payload(payload)
-    by_table =  _build_table_map(tables_blocks)
-    table = _tab(doctype_name)
-    if deleted or not frappe.db.exists("DocType",doctype_name):
-        by_table.pop(table,None)
-    else:
-        _process_schema_table(table, by_table)
-        block = by_table.get(table)
-        if block:
-            _process_table_for_missing_descriptions(block=block, batch_size=15)
-    _clean_schema_fields(by_table)
-    meta["last_sync"] = str(now_datetime())
-    _write_schema_outputs_incremental(meta, by_table, deleted_table=table if deleted else None)
-    convert_yaml_schema_to_sqlglot_meta()
-    build_table_fvs_job()
-    build_schema_fvs_job()
 
 def _call_openai_desc_map_once(client, prompt: str):
     return client.chat.completions.create(
@@ -870,115 +810,6 @@ def _smart_desc_map_openai(client, table_name: str, fields: List[Dict[str, Any]]
     return {}
 
 
-def _upsert_master_data_record(mod:str, doc_name:str):
-    entity_type = f"tab{mod}"
-    file_name = "master_data.yaml"
-    payload = _read_filedoctype(file_name, RAG_FOLDER)
-    meta, data = _normalize_master_data_payload(payload)
-    meta_doc = frappe.get_meta(mod)
-    title_field = meta_doc.title_field or "name"
-    if not frappe.db.exists(mod,doc_name):
-        return
-    fields = ["name"]
-    if title_field != "name":
-        fields.append(title_field)
-    rec = frappe.db.get_value(mod,doc_name,fields,as_dict=True) or {}
-    if mod == "Item":
-        item_code = rec.get("name")
-        item_name = rec.get(title_field) # item_name is title_field and item_code is the name field
-        if not item_code:
-            return
-        filters = [{"field": "item_code", "value": item_code}]
-        if item_name and item_name!=item_code:
-            filters.append({"field": "item_name", "value": item_name})
-        new_row = _build_master_data_row(entity_type, item_code, doc_name, title_field, filters)
-    else:
-        entity_id = rec.get(title_field) if title_field in rec else rec.get("name")
-        if not entity_id:
-            return
-        new_row = _build_master_data_row(entity_type, entity_id, doc_name, title_field, None)
-    data = [
-        row for row in data
-        if not (isinstance(row,dict) and row.get("entity_type")==entity_type and row.get("doc_name") == doc_name)
-    ]
-    data.append(new_row)
-    meta["last_sync"]= str(now_datetime())
-    write_filedoctype(file_name, {"_meta": meta, "data": data}, folder=RAG_FOLDER)
-
-
-
-def _remove_master_data_record(mod:str,doc_name:str):
-    entity_type = f"tab{mod}"
-    file_name = "master_data.yaml"
-    payload = _read_filedoctype(file_name, RAG_FOLDER)
-    meta, data = _normalize_master_data_payload(payload)
-    data = [
-        row for row in data
-        if not(isinstance(row,dict) and row.get("entity_type") == entity_type and row.get("doc_name") == doc_name)
-    ]
-    meta["last_sync"] =str(now_datetime())
-    write_filedoctype(file_name, {"_meta": meta, "data": data}, folder=RAG_FOLDER)
-
-def _schedule_debounced_fvs_rebuild():
-    if frappe.cache().get_value(MASTERDATA_REBUILD_LOCK_KEY):
-        return
-    frappe.cache().set_value(
-        MASTERDATA_REBUILD_LOCK_KEY,
-        "1",
-        expires_in_sec=DEBOUNCE_SEC + MASTERDATA_REBUILD_LOCK_BUFFER_SEC 
-    )
-    frappe.enqueue(
-        "changai.changai.api.v2.auto_gen_api.debounced_rebuild_master_fvs",
-        queue="long",
-        timeout=1800,
-    )
-def debounced_rebuild_master_fvs():
-    time.sleep(DEBOUNCE_SEC)
-    try:
-        build_master_data_fvs_job()
-    finally:
-        frappe.cache().delete_value(MASTERDATA_REBUILD_LOCK_KEY)
-         
-def sync_and_rebuild_masterdata_single(mod:str,doc_name :str,action:str):
-    if action == "delete":
-        _remove_master_data_record(mod, doc_name)
-    else:
-        _upsert_master_data_record(mod,doc_name)
-    _schedule_debounced_fvs_rebuild()
-
-
-@frappe.whitelist()
-def update_masterdata(doc: Optional[Document] = None, method: Optional[str] = None) -> None:
-    if not doc:
-        return
-    if method == "on_update" and doc.creation == doc.modified:
-        return
-    mod = doc.doctype # get doctype name
-    if method == "after_delete":
-        meta_doc = frappe.get_meta(mod)
-        frappe.enqueue(
-            "changai.changai.api.v2.auto_gen_api.sync_and_rebuild_masterdata_single",
-            queue="short",
-            timeout=300,
-            mod=mod,
-            doc_name=doc.name,
-            action="delete",
-        )
-    else:
-        frappe.enqueue(
-            "changai.changai.api.v2.auto_gen_api.sync_and_rebuild_masterdata_single",
-            queue="short",
-            timeout=300,
-            mod=mod,
-            doc_name=doc.name,
-            action="upsert",
-        )    
-
-
-
-DEBOUNCE_SEC =60
-MASTERDATA_REBUILD_LOCK_BUFFER_SEC  =300
-MASTERDATA_REBUILD_LOCK_KEY = "changai:masterdata_fvs_rebuild_pending"
 MODULES_TO_SYNC = [ 
     "Customer",
     "Supplier",
@@ -1028,20 +859,40 @@ def sync_master_data_smart() -> Dict[str, Any]:
 
 
 def sync_and_rebuild_masterdata():
-    sync_master_data_smart()
-    # call vector api
-    build_master_data_fvs_job()
+    try:
+        sync_master_data_smart()
+        # call vector api
+        build_master_data_fvs_job()
+    finally:
+        frappe.cache().delete_value(MASTERDATA_FULL_SYNC_LOCK_KEY)
 
 
-# Settings buttons: full rebuilds. update_masterdata/schema_sync are doc hooks and no-op without a doc.
-@frappe.whitelist()
-def sync_masterdata_from_ui() -> Dict[str, Any]:
-    frappe.has_permission("ChangAI Settings", "write", throw=True)
+MASTERDATA_FULL_SYNC_LOCK_KEY = "changai:masterdata_full_sync_pending"
+def schedule_masterdata_full_sync() -> bool:
+    """Enqueue a full master data sync unless one is already queued or running."""
+    if frappe.cache().get_value(MASTERDATA_FULL_SYNC_LOCK_KEY):
+        return False
+    frappe.cache().set_value(MASTERDATA_FULL_SYNC_LOCK_KEY, "1", expires_in_sec=1800 + 60)
     frappe.enqueue(
         "changai.changai.api.v2.auto_gen_api.sync_and_rebuild_masterdata",
         queue="long",
         timeout=1800,
     )
+    return True
+
+
+def daily_full_sync():
+    # Scheduler: the only automatic sync for master data and schema (there are no doc hooks).
+    schedule_masterdata_full_sync()
+    _schedule_full_schema_rebuild()
+
+
+# Settings buttons: full rebuilds on demand.
+@frappe.whitelist()
+def sync_masterdata_from_ui() -> Dict[str, Any]:
+    frappe.has_permission("ChangAI Settings", "write", throw=True)
+    if not schedule_masterdata_full_sync():
+        return {"ok": True, "message": _("A master data sync is already running.")}
     return {"ok": True, "message": _("Master data sync started in the background.")}
 
 

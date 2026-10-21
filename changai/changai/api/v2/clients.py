@@ -9,8 +9,14 @@ from google import genai
 from google.genai import types
 from google.oauth2 import service_account
 from google.api_core import exceptions as google_exceptions
+import anthropic
 from changai.changai.api.v2.schema_utils import (ChangAIConfig, CHANGAI_SETTINGS, CHANGAI_GUIDE_LINK, ERPGULF_LINK, get_settings_url)
 _GEMINI_CLIENT = None
+_CLAUDE_CLIENT = None
+_CLAUDE_KEY = None
+CLAUDE_DEFAULT_MODEL = "claude-opus-5-5"
+# Without a timeout a stalled call keeps the chat request open (SDK default is 10 minutes)
+CLAUDE_TIMEOUT_SEC = 60.0
 _GEMINI_CONFIG = None
 _GEMINI_IS_VERTEX = False
 APPLICATION_JSON = "application/json"
@@ -19,15 +25,6 @@ FREE_TIER_MODEL_ID = "gemini-3.5-flash-lite"
 # Without a timeout a stalled Gemini call keeps the chat request open indefinitely
 GEMINI_TIMEOUT_MS = 60000
 STATUS_200 = 200
-
-
-def call_model(prompt: str, task: str = "llm",sys_prompt: str = "") -> Any:
-    config = ChangAIConfig.get()
-    if config["REMOTE"] and config["llm"] == "QWEN3":
-        return remote_llm_request_deploy_test(prompt=prompt, task=task)
-    else:
-        if config["llm"] == "Gemini":
-            return call_gemini(prompt,sys_prompt)
 
 
 def _post_json(url: str, headers: Dict[str, str], payload: Dict[str, Any], timeout: int = 120):
@@ -95,7 +92,8 @@ def _throw_missing_vertex_field(project_id: str, location: str, credentials_json
 
 def _get_api_key_client(config):
     try:
-        api_key = config.get("gemini_api_key")
+        # Password field: .get() returns the "****" placeholder, get_password() the real key
+        api_key = (config.get_password("gemini_api_key", raise_exception=False) or "").strip()
     except Exception:
         api_key = None
 
@@ -312,9 +310,45 @@ def call_model(prompt: str, task: str = "llm",sys_prompt: str = "") -> Any:
     config = ChangAIConfig.get()
     if config["REMOTE"] and config["llm"] == "QWEN3":
         return remote_llm_request_deploy_test(prompt=prompt, task=task)
-    else:
-        if config["llm"] == "Gemini":
-            return call_gemini(prompt,sys_prompt)
+    if config["llm"] == "Claude":
+        return call_claude(prompt, sys_prompt)
+    return call_gemini(prompt,sys_prompt)
+
+
+def _claude_client():
+    global _CLAUDE_CLIENT, _CLAUDE_KEY
+    key = (frappe.get_single(CHANGAI_SETTINGS).get_password("claude_api_key", raise_exception=False) or "").strip()
+    if not key:
+        frappe.throw(_("Claude API key is not configured. Add it in ChangAI Settings."), title=_("Missing Claude API Key"))
+    if _CLAUDE_CLIENT is None or key != _CLAUDE_KEY:
+        _CLAUDE_CLIENT = anthropic.Anthropic(api_key=key, timeout=CLAUDE_TIMEOUT_SEC, max_retries=2)
+        _CLAUDE_KEY = key
+    return _CLAUDE_CLIENT
+
+def call_claude(prompt: str, sys_prompt: str) -> str:
+    config = ChangAIConfig.get()
+    try:
+        response = _claude_client().beta.messages.create(
+            model=config.get("claude_model") or CLAUDE_DEFAULT_MODEL,
+            max_tokens=16000,
+            system=sys_prompt or anthropic.NOT_GIVEN,
+            messages=[{"role": "user", "content": prompt}],
+            output_config={"effort": "low"},          # chat latency; raise if SQL quality needs it
+            betas=["server-side-fallback-2026-07-01"],
+            extra_body={"fallbacks": "default"},       # re-runs on another model if a request is refused
+        )
+    except anthropic.AuthenticationError:
+        frappe.throw(_("Claude API key is invalid. Update it in ChangAI Settings."), title=_("Invalid Claude API Key"))
+    except anthropic.RateLimitError:
+        frappe.throw(_("Claude rate limit reached. Wait a moment and try again."), title=_("Claude Rate Limit"))
+    except anthropic.APIConnectionError:
+        frappe.throw(_("Could not reach the Claude API. Check this server's internet access."), title=_("Claude Unreachable"))
+    except anthropic.APIStatusError as e:
+        frappe.throw(_("Claude API error ({0}): {1}").format(e.status_code, e.message), title=_("Claude API Error"))
+    if response.stop_reason == "refusal":
+        frappe.throw(_("Claude declined this request."), title=_("Claude Refused"))
+    text = "".join(b.text for b in response.content if b.type == "text")
+    return _clean_gemini_response_text(text)   # rename to _clean_response_text: it's provider-neutral
 
 
 def call_gemini(prompt: str,sys_prompt: str) -> Union[str, Dict[str, Any]]:

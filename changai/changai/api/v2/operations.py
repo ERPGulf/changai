@@ -5,9 +5,15 @@ from typing import Any, Dict, List, Tuple, Optional
 
 CHANGAI_GUIDE_LINK="https://app.erpgulf.com/en/articles/chang-ai-quick-start-guide"
 
+def _find_permitted_name(doctype: str, filters) -> Optional[str]:
+    # get_list applies read permission and User Permissions, so a lookup can't reveal
+    # that a record the user isn't allowed to see exists (frappe.db.get_value/exists would).
+    names = frappe.get_list(doctype, filters=filters, pluck="name", limit_page_length=1)
+    return names[0] if names else None
+
+
 @frappe.whitelist(allow_guest=False)
 def execute_insert(payload: dict) -> Any:
-    from changai.changai.api.v2.auto_gen_api import update_masterdata
     try:
         if isinstance(payload, str):
             payload = json.loads(payload) if payload else {}
@@ -56,23 +62,19 @@ def execute_insert(payload: dict) -> Any:
                         f"{doc.doctype} '{doc.name}' created successfully "
                         f"with linked {after_insert.get('linked_doctype', '')}."
                     )
-            update_masterdata()
 
             return result
         # ─── CASE 2: INSERT CHILD ROW ─────────────────────────
         elif operation == "insert_child":
             frappe.has_permission(payload["doctype"], "write", throw=True)
 
-            parent_name = frappe.db.get_value(
-                payload["doctype"], payload["filters"], "name"
-            )
+            parent_name = _find_permitted_name(payload["doctype"], payload["filters"])
             if not parent_name:
                 return {"error": f"No {payload['doctype']} found for given filters"}
 
             doc = frappe.get_doc(payload["doctype"], parent_name)
             doc.append(payload["child_table"], payload["data"])
             doc.save(ignore_permissions=False)
-            update_masterdata()
             return {
                 "success": True,
                 "operation": "insert_child",
@@ -86,9 +88,7 @@ def execute_insert(payload: dict) -> Any:
             frappe.has_permission(payload["linked_doctype"], "create", throw=True)
 
             # Get parent
-            parent_name = frappe.db.get_value(
-                payload["doctype"], payload["filters"], "name"
-            )
+            parent_name = _find_permitted_name(payload["doctype"], payload["filters"])
             if not parent_name:
                 return {"error": f"No {payload['doctype']} found for given filters"}
 
@@ -111,7 +111,6 @@ def execute_insert(payload: dict) -> Any:
                 parent_doc = frappe.get_doc(payload["doctype"], parent_name)
                 parent_doc.set(payload["link_via"], linked_doc.name)
                 parent_doc.save(ignore_permissions=False)
-            update_masterdata()
             
             return {
                 "success": True,
@@ -126,9 +125,7 @@ def execute_insert(payload: dict) -> Any:
             frappe.has_permission(payload["linked_doctype"], "create", throw=True)
 
             # Get parent
-            parent_name = frappe.db.get_value(
-                payload["doctype"], payload["filters"], "name"
-            )
+            parent_name = _find_permitted_name(payload["doctype"], payload["filters"])
             if not parent_name:
                 return {"error": f"No {payload['doctype']} found for given filters"}
 
@@ -156,7 +153,6 @@ def execute_insert(payload: dict) -> Any:
                 parent_doc = frappe.get_doc(payload["doctype"], parent_name)
                 parent_doc.set(payload["link_via"], linked_doc.name)
                 parent_doc.save(ignore_permissions=False)
-            update_masterdata()
             
             return {
                 "success": True,
@@ -192,7 +188,6 @@ def execute_insert(payload: dict) -> Any:
                         "record": record,
                         "error": str(e)
                     })
-            update_masterdata()
             return {
                 "success": True,
                 "operation": "insert_bulk",
@@ -207,7 +202,8 @@ def execute_insert(payload: dict) -> Any:
         elif operation == "insert_if_not_exists":
             frappe.has_permission(payload["doctype"], "create", throw=True)
 
-            # Check if already exists
+            # Check if already exists. Deliberately not permission-filtered: a record the user
+            # can't see must still count as existing, or this would create a duplicate.
             exists = frappe.db.exists(payload["doctype"], payload["filters"])
             if exists:
                 return {
@@ -223,7 +219,6 @@ def execute_insert(payload: dict) -> Any:
                 **payload["data"]
             })
             doc.insert(ignore_permissions=False)
-            update_masterdata()
             return {
                 "success": True,
                 "operation": "insert_if_not_exists",
@@ -395,7 +390,6 @@ def _unset_primary_flags(doc, child_table: str, data: dict):
 
 @frappe.whitelist(allow_guest=False)
 def execute_update(payload: dict):
-    from changai.changai.api.v2.auto_gen_api import update_masterdata
     try:
         if isinstance(payload, str):
             payload = json.loads(payload)
@@ -411,7 +405,6 @@ def execute_update(payload: dict):
 
             failed = [r for r in results if r.get("error")]
             success = [r for r in results if r.get("success")]
-            update_masterdata()
             return {
                 "success": len(failed) == 0,
                 "operation": "multi_payload",
@@ -461,7 +454,6 @@ def execute_update(payload: dict):
                 for field, value in payload["data"].items():
                     doc.set(field, value)
                 doc.save(ignore_permissions=False)
-            update_masterdata()
             return {
                 "success": True,
                 "operation": "update",
@@ -481,7 +473,7 @@ def execute_update(payload: dict):
             if not payload.get("data"):
                 return {"error": "No data provided for update_child."}
 
-            if not frappe.db.exists(payload["doctype"], payload["name"]):
+            if not _find_permitted_name(payload["doctype"], {"name": payload["name"]}):
                 return {"error": f"No {payload['doctype']} found with name '{payload['name']}'"}
 
             doc = frappe.get_doc(payload["doctype"], payload["name"])
@@ -523,7 +515,6 @@ def execute_update(payload: dict):
                 doc.append(payload["child_table"], payload["data"])
 
             doc.save(ignore_permissions=False)
-            update_masterdata()
 
             return {
                 "success": True,
@@ -553,11 +544,7 @@ def execute_update(payload: dict):
                     return {"error": "No data provided for update_linked_child."}
 
             # ✅ Step 1 — Find parent
-            parent_name = frappe.db.get_value(
-                payload["doctype"],
-                payload["filters"],
-                "name"
-            )
+            parent_name = _find_permitted_name(payload["doctype"], payload["filters"])
             if not parent_name:
                 return {"error": f"No {payload['doctype']} found for given filters"}
 
@@ -637,7 +624,6 @@ def execute_update(payload: dict):
                     linked_doc.append(payload["child_table"], payload["data"])
 
                 linked_doc.save(ignore_permissions=False)
-                update_masterdata()
 
                 return {
                     "success": True,
@@ -655,7 +641,6 @@ def execute_update(payload: dict):
                 for field, value in payload["data"].items():
                     linked_doc.set(field, value)
                 linked_doc.save(ignore_permissions=False)
-                update_masterdata()
 
                 return {
                     "success": True,
@@ -694,7 +679,6 @@ def execute_update(payload: dict):
         
 @frappe.whitelist(allow_guest=False)
 def execute_delete(payload:dict):
-    from changai.changai.api.v2.auto_gen_api import update_masterdata
     try:
         if isinstance(payload, str):
             payload = json.loads(payload)
@@ -734,7 +718,6 @@ def execute_delete(payload:dict):
                 deleted.append(record.name)
 
             
-            update_masterdata()
             
             return {
                 "success": True,
@@ -774,7 +757,6 @@ def execute_delete(payload:dict):
             deleted = before - len(doc.get(payload["child_table"]))
 
             doc.save(ignore_permissions=False)
-            update_masterdata()
             return {
                 "success": True,
                 "operation": "delete_child",
@@ -786,11 +768,7 @@ def execute_delete(payload:dict):
         elif operation in ("delete_linked", "delete_linked_child"):
             frappe.has_permission(payload["doctype"], "delete", throw=True)
 
-            parent_name = frappe.db.get_value(
-                payload["doctype"],
-                payload["filters"],
-                "name"
-            )
+            parent_name = _find_permitted_name(payload["doctype"], payload["filters"])
 
             if not parent_name:
                 return {
@@ -857,7 +835,6 @@ def execute_delete(payload:dict):
                 )
 
                 linked_doc.save(ignore_permissions=False)
-                update_masterdata()
                 return {
                     "success": True,
                     "operation": "delete_linked_child",
@@ -878,7 +855,6 @@ def execute_delete(payload:dict):
             )
 
             
-            update_masterdata()
             return {
                 "success": True,
                 "operation": "delete_linked",
