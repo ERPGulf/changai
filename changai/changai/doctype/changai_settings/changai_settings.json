@@ -45,6 +45,9 @@
   "entity_retriever",
   "openai_api_key",
   "claude_api_key",
+  "claude_model",
+  "anthropic_base_url",
+  "claude_extra_headers",
   "support_tab",
   "support_section",
   "support_url",
@@ -217,6 +220,27 @@
    "fieldname": "claude_api_key",
    "fieldtype": "Data",
    "label": "Claude API Key"
+  },
+  {
+   "default": "claude-sonnet-4-6",
+   "description": "Model name to pass to the Anthropic-compatible API. Change only when pointing at a non-Anthropic backend (e.g. a self-hosted router or proxy).",
+   "fieldname": "claude_model",
+   "fieldtype": "Data",
+   "label": "Claude Model"
+  },
+  {
+   "default": "https://api.anthropic.com",
+   "description": "Base URL of the Anthropic-compatible API. Leave as the default for api.anthropic.com. Set to a custom URL (e.g. https://your-internal-router/v1) when using a self-hosted Anthropic-compatible service.",
+   "fieldname": "anthropic_base_url",
+   "fieldtype": "Data",
+   "label": "Anthropic Base URL"
+  },
+  {
+   "description": "Optional JSON object of HTTP headers to send with every Claude request. Useful for backends that require custom auth headers. Example: {\"X-API-Key\": \"your-key\"}",
+   "fieldname": "claude_extra_headers",
+   "fieldtype": "Code",
+   "label": "Claude Extra Headers (JSON)",
+   "options": "JSON"
   },
   {
    "fieldname": "support_tab",
