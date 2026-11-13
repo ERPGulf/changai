@@ -8,7 +8,6 @@ import frappe
 from langchain_core.documents import Document
 from langchain_community.docstore.in_memory import InMemoryDocstore
 from langchain_community.vectorstores import FAISS
-from changai.changai.api.v2.retrieve import get_embedding_engine
 import os
 import pickle
 from changai.changai.api.v2.non_erp_handler import _safe_open_path
@@ -413,6 +412,25 @@ def build_entity_docs(master_data: Dict[str, Any]) -> List[Document]:
     return docs
 
 
+# Small batches keep the model's working memory low; throughput on CPU barely changes
+EMBED_BATCH_SIZE = 16
+
+
+def _embed_in_batches(emb, texts: List[str]) -> np.ndarray:
+    """Embed into one preallocated float32 matrix, a batch at a time.
+
+    embed_documents() on the whole list returns Python float lists, several times the
+    size of the final matrix, all held at once on top of the model.
+    """
+    out = None
+    for start in range(0, len(texts), EMBED_BATCH_SIZE):
+        batch = np.asarray(emb.embed_documents(texts[start:start + EMBED_BATCH_SIZE]), dtype="float32")
+        if out is None:
+            out = np.empty((len(texts), batch.shape[1]), dtype="float32")
+        out[start:start + len(batch)] = batch
+    return out
+
+
 def _build_and_save_faiss(
     docs: List[Document],
     out_path: str,
@@ -424,16 +442,18 @@ def _build_and_save_faiss(
 
     safe_path = _assert_dir_inside_base(out_path, base_dir)
     safe_path.mkdir(parents=True, exist_ok=True)
+    # Imported here: retrieve loads torch/transformers, which the sync and description
+    # stages import this module for but don't need
+    from changai.changai.api.v2.retrieve import get_embedding_engine
     emb = get_embedding_engine()
 
-    doc_texts = [d.page_content for d in docs]
-    vectors   = emb.embed_documents(doc_texts)
+    vectors = _embed_in_batches(emb, [d.page_content for d in docs])
 
-    dim   = len(vectors[0])
+    dim   = vectors.shape[1]
     index = faiss.IndexHNSWFlat(dim, HNSW_M)
     index.hnsw.efConstruction = EF_CONSTRUCTION
     index.hnsw.efSearch       = EF_SEARCH
-    index.add(np.array(vectors, dtype="float32"))
+    index.add(vectors)
     store = FAISS(
         embedding_function=emb,
         index=index,
@@ -448,27 +468,18 @@ def _build_and_save_faiss(
 @frappe.whitelist(allow_guest=False)
 def build_all_fvs() -> Dict[str, Any]:
     """
-    Enqueues 3 separate background jobs to build FAISS vector stores.
+    Rebuild the FAISS vector stores through the guarded, deduplicated jobs: table then
+    schema index as a chain, plus the master data sync. Queuing all three at once let
+    three workers each load the embedding model at the same time.
     """
+    from changai.changai.api.v2.rebuild_jobs import schedule_index_rebuild, schedule_masterdata_sync
+
     frappe.has_permission("ChangAI Settings", "write", throw=True)
-    frappe.enqueue(
-        "changai.changai.api.v2.build_cards_faiss_index_v2.build_table_fvs_job",
-        queue="long",
-        timeout=1800,
-    )
-    frappe.enqueue(
-        "changai.changai.api.v2.build_cards_faiss_index_v2.build_schema_fvs_job",
-        queue="long",
-        timeout=1800,
-    )
-    frappe.enqueue(
-        "changai.changai.api.v2.build_cards_faiss_index_v2.build_master_data_fvs_job",
-        queue="long",
-        timeout=1800,
-    )
+    index_queued, index_message = schedule_index_rebuild()
+    masterdata_queued, masterdata_message = schedule_masterdata_sync()
     return {
-        "status": "enqueued",
-        "message": "All 3 FVS build jobs have been queued. Check Error Logs for progress.",
+        "status": "enqueued" if index_queued or masterdata_queued else "not_queued",
+        "message": f"{index_message} {masterdata_message}",
     }
 
 def build_table_fvs_job():
@@ -491,12 +502,10 @@ def build_table_fvs_job():
 
 
 def save_field_matrix(schema_docs, base_dir):
+    from changai.changai.api.v2.retrieve import get_embedding_engine
     emb = get_embedding_engine()
 
-    texts = [d.page_content for d in schema_docs]
-    vectors = emb.embed_documents(texts)
-
-    embs = np.array(vectors, dtype="float32")
+    embs = _embed_in_batches(emb, [d.page_content for d in schema_docs])
     embs = embs / np.clip(
         np.linalg.norm(embs, axis=1, keepdims=True),
         1e-12,

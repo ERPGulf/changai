@@ -813,11 +813,11 @@ def detect_specific_entities(state: SQLState) -> SQLState:
         }
 
     try:
-        # Master data is kept current by doc hooks + a daily full sync, so no per-question staleness
-        # check. If it was never built, start a build and answer without entity cards meanwhile.
+        # Master data is kept current by the 03:00 sync, so no per-question staleness check.
+        # If it was never built, start a build and answer without entity cards meanwhile.
         if not frappe.db.get_single_value("ChangAI Settings", "last_masterdata_sync"):
-            from changai.changai.api.v2.auto_gen_api import schedule_masterdata_full_sync
-            schedule_masterdata_full_sync()
+            from changai.changai.api.v2.rebuild_jobs import schedule_masterdata_sync
+            schedule_masterdata_sync()
             return {**state, "entity_cards": [], "entity_raw": None}
         out = call_entity_retriever(False, q, state)
         return {

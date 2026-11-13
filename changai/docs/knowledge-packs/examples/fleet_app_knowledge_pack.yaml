@@ -1,0 +1,86 @@
+# Minimal example pack for a fictional fleet app. See ../minimal-pack.md
+pack_version: 1
+app: fleet_app
+app_title: Fleet App
+source:
+  repository: https://github.com/example/fleet_app
+  commit: 1a2b3c4
+drafted_on: 2026-11-13
+reviewed_by: null
+status: Draft
+
+overview: >
+  Vehicle fleet management for ERPNext. Each Vehicle has Trips and Service Records.
+  A trip is planned, started and completed by a driver (Employee). The app does not
+  handle fuel purchases; those are Purchase Invoices.
+
+flow:
+  - "Trip is created with status Planned."
+  - "Driver starts the trip: status In Transit."
+  - "Driver completes it: status Completed, and distance_km is filled."
+  - "A trip can be Cancelled before it starts."
+
+topics:
+  trip status:  [status_field]
+  vehicles:     [app_doctypes.Vehicle]
+  service:      [app_doctypes.Service Record]
+  flow:         [flow]
+
+status_field:
+  doctypes: [Trip]
+  fieldname: status
+  default: "Planned"
+  values:
+    "Planned": "Created, not started."
+    "In Transit": "Started by the driver, not finished."
+    "Completed": "Finished; distance recorded."
+    "Cancelled": "Cancelled before start."
+  groups:
+    open: ["Planned", "In Transit"]
+
+app_doctypes:
+  Trip:
+    use_for: "Journeys by vehicle and driver: dates, route, distance, status."
+  Vehicle:
+    use_for: "The fleet: plate number, model, current odometer."
+  Service Record:
+    use_for: "Maintenance done on a vehicle, with cost and date."
+    not_for: "Fuel (use Purchase Invoice)."
+
+never_send:
+  Fleet Settings:
+    - gps_api_key
+
+words:
+  "trip, journey, delivery run":      "Trip"
+  "on the road, in transit, running": "Trip.status = In Transit"
+  "truck, car, vehicle":              "Vehicle"
+
+metrics:
+  - name: Distance Travelled
+    value: sum(distance_km)
+    fixed_filters: [[status, "=", "Completed"]]
+  - name: Open Trips
+    value: count
+    fixed_filters: [[status, "in", ["Planned", "In Transit"]]]
+metric_defaults:
+  source: Trip
+  date_field: start_date
+  dimensions: [vehicle, driver]
+
+reports: []
+tools: []
+
+masters:
+  - doctype: Vehicle
+    fields: [plate_number, model]
+    roles: [vehicle, truck, car]
+
+examples:
+  - question: "How many trips are in transit?"
+    tool: "get_metric(Open Trips, filters: status=In Transit)"
+  - question: "Distance travelled by {vehicle} {period}"
+    tool: "get_metric(Distance Travelled, vehicle={vehicle}, period={period})"
+
+review_notes:
+  - "Confirm whether Cancelled trips can have a distance."

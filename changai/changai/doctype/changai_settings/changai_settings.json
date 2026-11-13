@@ -27,6 +27,7 @@
   "section_break_gnue",
   "retain_memory",
   "last_schema_sync",
+  "schema_rebuild_pending",
   "last_masterdata_sync",
   "testing_section",
   "retriever_structure",
@@ -274,7 +275,7 @@
    "default": "0",
    "fieldname": "update_schema_file",
    "fieldtype": "Button",
-   "label": "Update Schema file"
+   "label": "Rebuild Schema Index"
   },
   {
    "fieldname": "module_and_description",
@@ -376,6 +377,14 @@
    "label": "Last schema sync"
   },
   {
+   "default": "0",
+   "description": "Set after bench migrate. The 03:00 job rebuilds the schema index and clears it.",
+   "fieldname": "schema_rebuild_pending",
+   "fieldtype": "Check",
+   "label": "Schema Rebuild Pending",
+   "read_only": 1
+  },
+  {
    "fieldname": "last_masterdata_sync",
    "fieldtype": "Datetime",
    "label": "Last Master data sync "
@@ -408,7 +417,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-21 11:49:40.598704",
+ "modified": "2026-10-27 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Changai",
  "name": "ChangAI Settings",

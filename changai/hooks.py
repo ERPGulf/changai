@@ -119,7 +119,8 @@ app_include_css = [
 # before_install = "changai.setup.install.install_system_deps"
 
 # after_install = "changai.changai.api.v2.install.after_install"
-# after_migrate = "changai.changai.api.v2.auto_gen_api.rebuild_masterdata_after_migrate"
+# Never rebuild inside migrate: only flag it, and the 03:00 job does the rebuild
+after_migrate = "changai.changai.api.v2.rebuild_jobs.mark_schema_rebuild_pending"
 # Uninstallation
 # ------------
 
@@ -185,9 +186,9 @@ doc_events = {
 # # 	}
 }
 
-# also runs after bench migrate
+# No model/FAISS warm-up at login: loading them in the web worker on every login hung
+# production sites. retrieve.py loads each one lazily on the first ChangAI call instead.
 on_session_creation = [
-    "changai.changai.api.v2.retrieve.load_on_startup",
     "changai.changai.api.v2.schema_utils.reload_mapping_schema_cache"
 ]
 
@@ -202,9 +203,12 @@ on_session_creation = [
 # ---------------
 
 scheduler_events = {
-    "daily": [
-        "changai.changai.api.v2.auto_gen_api.daily_full_sync",
-    ],
+    "cron": {
+        # 03:00: rebuild schema/master data only when pending or out of date
+        "0 3 * * *": [
+            "changai.changai.api.v2.rebuild_jobs.nightly_sync",
+        ],
+    },
 }
 
 # scheduler_events = {

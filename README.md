@@ -259,6 +259,7 @@ Run the Train Data Automation feature to generate additional training data from 
 | Documentation | [docs.claudion.com](https://docs.claudion.com/Claudion-Docs/changaisetup) |
 | Embedding Model | [huggingface.co/hyrinmansoor/changAI-nomic-embed-text-v1.5-finetuned](https://huggingface.co/hyrinmansoor/changAI-nomic-embed-text-v1.5-finetuned) |
 | Dataset | [huggingface.co/datasets/hyrinmansoor/ERP-retrieval-data-modernbert](https://huggingface.co/datasets/hyrinmansoor/ERP-retrieval-data-modernbert) |
+| Knowledge Packs (for app developers) | [docs/knowledge-packs](docs/knowledge-packs/README.md) |
 | Issues | [github.com/ERPGulf/changAI/issues](https://github.com/ERPGulf/changAI/issues) |
 | Support | [support@erpgulf.com](mailto:support@erpgulf.com) |
 | Website | [erpgulf.com](https://erpgulf.com) |
