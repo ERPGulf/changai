@@ -32,7 +32,8 @@ import frappe
 from frappe import _
 from huggingface_hub import snapshot_download
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
+# HuggingFaceEmbeddings is imported inside get_embedding_engine(): it pulls in torch
+# (~400 MB), which processes using the embedding service never need.
 _KEYWORDS_LIST = None
 _KEYWORDS_SET = None
 _FIELD_DOCS_CACHE = None
@@ -145,7 +146,15 @@ def get_embedding_engine():
     global _EMBEDDER_INSTANCE
     if _EMBEDDER_INSTANCE is not None:
         return _EMBEDDER_INSTANCE
-    
+
+    service_url = frappe.conf.get("changai_embedding_service_url")
+    if service_url:
+        # The model runs in the embedding service (emb_load_service.py); this process
+        # never loads torch or the model
+        from changai.changai.api.v2.embedding_client import EmbeddingServiceClient
+        _EMBEDDER_INSTANCE = EmbeddingServiceClient(service_url)
+        return _EMBEDDER_INSTANCE
+
     model_path = _get_model_path()  # check path first, always
     
     if not os.path.exists(model_path):
@@ -163,6 +172,7 @@ def get_embedding_engine():
         )
     
     if _EMBEDDER_INSTANCE is None:
+        from langchain_huggingface import HuggingFaceEmbeddings
         _EMBEDDER_INSTANCE = HuggingFaceEmbeddings(
             model_name=model_path,
             model_kwargs={"device": "cpu","trust_remote_code": True,},
@@ -259,47 +269,6 @@ def get_master_vs():
         frappe.log_error(f"Error loading master vector store: {e}", "ChangAI Master VS Load Error")
 
     return _VS_MASTER
-_WARMUP_COUNT=0
-def load_on_startup():
-    global _WARMUP_COUNT,_EMBEDDER_INSTANCE, _VS_TABLE, _FULL_FIELDS_VS, _VS_MASTER, _FIELD_DOCS_CACHE, _GEMINI_CLIENT
-    _WARMUP_COUNT+=1
-    frappe.log_error(
-        title=f"ChangAI Warmup called | PID {os.getpid()} | Count {_WARMUP_COUNT}",
-        message="load_on_startup triggered"
-    )
-    # If all are already loaded, skip
-    if all([
-        _EMBEDDER_INSTANCE is not None,
-        _VS_TABLE is not None,
-        _FULL_FIELDS_VS is not None,
-        _VS_MASTER is not None,
-        _FIELD_DOCS_CACHE is not None    ]):
-        frappe.log_error(
-            title=f"ChangAI Warmup skipped | PID {os.getpid()}",
-            message="Already loaded in this worker"
-        )
-        return 
-    message=f"PID={os.getpid()} | module={__name__} | file={__file__} | loaded={_EMBEDDER_INSTANCE is not None} | id={id(_EMBEDDER_INSTANCE)}"
-    try:
-        load_non_erp_data()
-        get_embedding_engine()
-        get_vs(True)
-        load_field_matrix()
-        gemini_client()
-        get_master_vs()
-        _init_keywords()
-        config = ChangAIConfig.get()
-        get_polly_client(config)
-        frappe.log_error(
-        title="ChangAI Warmup Completed",
-        message=frappe.get_traceback()  # full stack trace
-    )
-    except Exception as e:
-        frappe.log_error(
-        title="ChangAI Warmup Failed",
-        message=frappe.get_traceback()  # full stack trace
-    )
-    return message
 @lru_cache(maxsize=None)
 def _word_is_erp(word: str) -> bool:
     if len(word) <= 3:

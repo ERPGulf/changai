@@ -5,22 +5,15 @@ import gc
 import json
 import os
 import time
-from sentence_transformers import SentenceTransformer
-from langchain_community.vectorstores import FAISS
-from langchain_core.embeddings import Embeddings
 import yaml
 import frappe
 from frappe import _
-from changai.changai.api.v2.build_cards_faiss_index_v2 import build_schema_fvs_job,build_master_data_fvs_job,build_table_fvs_job,_generate_table_description
 from frappe.utils import now_datetime, add_to_date
 from anthropic import Anthropic
-import openai
-import math
-from pathlib import Path
 from changai.changai.api.v2.schema_utils import convert_yaml_schema_to_sqlglot_meta
-from frappe.utils.file_manager import get_file
 from changai.changai.api.v2.clients import call_model
-from changai.changai.api.v2.train_data_api import _get_openai_client
+# No torch / sentence_transformers / FAISS / training imports here: this module runs the
+# schema sync and description stages, which need none of them, and importing them cost ~1 GB.
 JSON_EXT = ".json"
 SCHEMA_YAML = "schema.yaml"
 YAML_EXT = ".yaml"
@@ -482,7 +475,6 @@ def fill_missing_field_descriptions(
         "fields_updated": updated_fields,
         "status": "Complete" if consecutive_errors <= 5 else "Partial Failure",
     }
-from changai.changai.api.v2.build_cards_faiss_index_v2 import enrich_tables_descriptions
 
 def sync_tables_and_schema_smart() -> Dict[str, Any]:
     payload = _read_filedoctype(SCHEMA_YAML, RAG_FOLDER)
@@ -507,7 +499,17 @@ def sync_tables_and_schema_smart() -> Dict[str, Any]:
     missing_from_schema = {t for t in current_tables if t not in by_table}
 
     tables_to_process = sorted(changed_tables | missing_from_schema)
-    table_dict_with_desc = enrich_tables_descriptions(current_tables)
+    # Reuse the descriptions already in tables.json; only tables without one go to the LLM.
+    # Passing bare names made every table look undescribed: ~700 LLM calls on every sync.
+    from changai.changai.api.v2.build_cards_faiss_index_v2 import enrich_tables_descriptions
+    saved_desc = {
+        row["table"]: row.get("description") or ""
+        for row in (_read_filedoctype(TABLES_JSON, RAG_FOLDER) or [])
+        if isinstance(row, dict) and row.get("table")
+    }
+    table_dict_with_desc = enrich_tables_descriptions(
+        [{"table": t, "description": saved_desc.get(t, "")} for t in current_tables]
+    )
 
     for table in tables_to_process:
         _process_schema_table(table, by_table)
@@ -755,25 +757,6 @@ def _smart_desc_map_gemini(table_name: str, fields: List[Dict[str, Any]]) -> Dic
             frappe.logger().error(f"Gemini error table={table_name} attempt={attempt+1}: {e}")
         time.sleep(2 * (attempt + 1))
     return {}
-def full_schema_rebuild_job():
-    res = sync_tables_and_schema_smart()
-    if res and res.get("ok"):
-        fill_missing_field_descriptions()
-        convert_yaml_schema_to_sqlglot_meta()
-        build_table_fvs_job()
-        build_schema_fvs_job()
-
-SCHEMA_REBUILD_LOCK_KEY = "changai:schema_full_rebuild_pending"
-def _schedule_full_schema_rebuild():
-    if frappe.cache().get_value(SCHEMA_REBUILD_LOCK_KEY):
-        return
-    frappe.cache().set_value(SCHEMA_REBUILD_LOCK_KEY, "1", expires_in_sec=14400 + 60)
-    frappe.enqueue(
-        "changai.changai.api.v2.auto_gen_api.full_schema_rebuild_job",
-        queue="long",
-        timeout=14400,
-    )
-
 def _call_openai_desc_map_once(client, prompt: str):
     return client.chat.completions.create(
         model="gpt-4o-mini",
@@ -856,62 +839,3 @@ def sync_master_data_smart() -> Dict[str, Any]:
     settings.save(ignore_permissions=True)
     payload_out = {"_meta": meta, "data": final_data}
     write_filedoctype(file_name, payload_out, folder=RAG_FOLDER)
-
-
-def sync_and_rebuild_masterdata():
-    try:
-        sync_master_data_smart()
-        # call vector api
-        build_master_data_fvs_job()
-    finally:
-        frappe.cache().delete_value(MASTERDATA_FULL_SYNC_LOCK_KEY)
-
-
-MASTERDATA_FULL_SYNC_LOCK_KEY = "changai:masterdata_full_sync_pending"
-def schedule_masterdata_full_sync() -> bool:
-    """Enqueue a full master data sync unless one is already queued or running."""
-    if frappe.cache().get_value(MASTERDATA_FULL_SYNC_LOCK_KEY):
-        return False
-    frappe.cache().set_value(MASTERDATA_FULL_SYNC_LOCK_KEY, "1", expires_in_sec=1800 + 60)
-    frappe.enqueue(
-        "changai.changai.api.v2.auto_gen_api.sync_and_rebuild_masterdata",
-        queue="long",
-        timeout=1800,
-    )
-    return True
-
-
-def daily_full_sync():
-    # Scheduler: the only automatic sync for master data and schema (there are no doc hooks).
-    schedule_masterdata_full_sync()
-    _schedule_full_schema_rebuild()
-
-
-# Settings buttons: full rebuilds on demand.
-@frappe.whitelist()
-def sync_masterdata_from_ui() -> Dict[str, Any]:
-    frappe.has_permission("ChangAI Settings", "write", throw=True)
-    if not schedule_masterdata_full_sync():
-        return {"ok": True, "message": _("A master data sync is already running.")}
-    return {"ok": True, "message": _("Master data sync started in the background.")}
-
-
-@frappe.whitelist()
-def sync_schema_from_ui() -> Dict[str, Any]:
-    frappe.has_permission("ChangAI Settings", "write", throw=True)
-    if frappe.cache().get_value(SCHEMA_REBUILD_LOCK_KEY):
-        return {"ok": True, "message": _("A schema sync is already running.")}
-    _schedule_full_schema_rebuild()
-    return {"ok": True, "message": _("Schema sync started in the background.")}
-
-
-#run after migrate - single full scan call
-def rebuild_masterdata_after_migrate(doc: Optional[Document] = None, method: Optional[str] = None) -> None:
-    try:
-        sync_and_rebuild_masterdata()
-    except Exception:
-        frappe.log_error(frappe.get_traceback(), "ChangAI patch: masterdata rebuild failed")
-    try:
-        full_schema_rebuild_job()
-    except Exception:
-        frappe.log_error(frappe.get_traceback(), "ChangAI patch: schema rebuild failed")

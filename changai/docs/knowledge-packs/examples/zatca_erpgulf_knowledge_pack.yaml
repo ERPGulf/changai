@@ -1,0 +1,413 @@
+# changAI knowledge pack for zatca_erpgulf
+# Suggested location in the app:  zatca_erpgulf/changai/knowledge_pack.yaml
+#
+# STATUS: DRAFT. Written from the public repository; every entry needs review by a
+# consultant who knows the app before changAI may use it. Items the code did not make
+# clear are listed under "review_notes" at the end.
+
+pack_version: 1
+app: zatca_erpgulf
+app_title: ZATCA ERPGulf
+source:
+  repository: https://github.com/ERPGulf/zatca_erpgulf
+  commit: ba0a088            # 2026-10-26
+drafted_on: 2026-11-13
+reviewed_by: null            # fill in on review
+status: Draft                # Draft | Reviewed
+
+# ---------------------------------------------------------------------------
+# 1. Overview (sent to the AI in the cached system part; keep it short)
+# ---------------------------------------------------------------------------
+overview: >
+  Saudi e-invoicing (ZATCA Phase 1 and Phase 2) for ERPNext. When a Sales Invoice or
+  POS Invoice is submitted for a Saudi company, the app builds the e-invoice XML, signs
+  it, sends it to ZATCA and stores the result on the invoice. Standard (B2B) invoices are
+  cleared by ZATCA; simplified (B2C) invoices are reported to ZATCA. The app does not
+  create new business documents: it adds ZATCA fields to Sales Invoice, POS Invoice,
+  Purchase Invoice, Customer, Company and a few other doctypes, plus log doctypes.
+
+flow:
+  - "Customer is marked B2C or not (Customer.custom_b2c). Sales Invoice.custom_b2c is copied from the customer."
+  - "Sales Invoice or POS Invoice is submitted (docstatus = 1)."
+  - "The app sends it to ZATCA: immediately (Live), or later by a scheduler that runs every 30 minutes (Batches / Background, B2C and POS only)."
+  - "ZATCA's answer is written to custom_zatca_status, custom_uuid and custom_zatca_full_response on the invoice."
+  - "A row is written to ZATCA ERPGulf Success Log, or to ZATCA ERPGulf Event Log on problems."
+  - "Invoices left as 'Not Submitted' or '503 Service Unavailable' are picked up again by the scheduler, or resubmitted by a user from the list view."
+  - "A cleared or reported invoice cannot be cancelled; a credit note (return) is issued instead."
+
+applies_when: "Company country is Saudi Arabia (custom_company_country = 'Saudi Arabia') and Company.custom_zatca_invoice_enabled = 1."
+
+# ---------------------------------------------------------------------------
+# 2. Status values (the field is plain Data; these values come from the code)
+# ---------------------------------------------------------------------------
+status_field:
+  doctypes: [Sales Invoice, POS Invoice]
+  fieldname: custom_zatca_status
+  default: "Not Submitted"
+  values:
+    "Not Submitted": "Not yet accepted by ZATCA: not sent yet, waiting for the background job, or the last attempt failed."
+    "REPORTED": "Simplified (B2C) invoice reported to ZATCA successfully."
+    "CLEARED": "Standard (B2B) invoice cleared by ZATCA successfully."
+    "503 Service Unavailable": "ZATCA's server was unavailable; the scheduler retries these."
+    "Intra-company transfer": "Company tax ID equals customer tax ID; the invoice is not sent to ZATCA."
+    "Phase-1 QR Generated": "Phase 1 company: QR code generated locally, nothing sent to ZATCA."
+  groups:
+    accepted_by_zatca: ["REPORTED", "CLEARED"]
+    pending_or_failed: ["Not Submitted", "503 Service Unavailable"]
+  notes:
+    - "Values are stored in upper case for REPORTED and CLEARED."
+    - "To find WHY an invoice failed, read custom_zatca_full_response on the invoice or ZATCA ERPGulf Event Log."
+
+# ---------------------------------------------------------------------------
+# 3. Fields added to standard doctypes
+# ---------------------------------------------------------------------------
+doctypes:
+  Sales Invoice:
+    use_for: "ZATCA status of sales invoices and credit notes; B2B vs B2C split; tax category; VAT sent to ZATCA."
+    fields:
+      custom_zatca_status: "ZATCA result. See status_field."
+      custom_uuid: "UUID sent to ZATCA. Default text 'Not submitted' until sent."
+      custom_b2c: "1 = simplified (B2C) invoice, 0 = standard (B2B). Copied from the customer, read-only."
+      custom_company_country: "Company's country, copied from Company. ZATCA applies only when 'Saudi Arabia'."
+      custom_zatca_tax_category: "Standard | Zero Rated | Exempted | Services outside scope of tax / Not subject to VAT."
+      custom_exemption_reason_code: "ZATCA exemption code (VATEX-SA-...), used when the category is not Standard."
+      custom_tax_exemption_reason: "Text of the exemption reason."
+      custom_zatca_full_response: "Raw response text from ZATCA, including warnings and errors."
+      custom_ksa_einvoicing_xml: "Attached e-invoice XML file."
+      ksa_einv_qr: "QR code image."
+      custom_zatca_pos_name: "Link to ZATCA Multiple Setting: the device or POS machine whose certificate signed the invoice."
+      custom_user_invoice_number: "User's own invoice number."
+      custom_credit_note_reasoninstruction_note: "Reason text for a credit note. Default 'Cancellation or Returned'."
+      custom_return_against_for_zatca: "Original invoice reference for a credit note when it is not in the system."
+      custom_zatca_export_invoice: "1 = export invoice."
+      custom_zatca_third_party_invoice: "1 = third-party invoice."
+      custom_zatca_nominal_invoice: "1 = nominal invoice."
+      custom_summary_invoice: "1 = summary invoice."
+      custom_self_billed_invoice: "1 = self-billed invoice."
+      custom_zatca_pmm: "1 = Profit Margin Method invoice. The app skips ZATCA submission for these."
+      custom_zatca_discount_reason_code: "Discount reason code sent to ZATCA. Default 95."
+      custom_zatca_discount_reason: "Discount reason text. Default 'Discount'."
+    related_standard_fields:
+      is_return: "1 = credit note."
+      base_net_total: "Sales amount before VAT, company currency."
+      base_total_taxes_and_charges: "VAT amount, company currency."
+
+  POS Invoice:
+    use_for: "ZATCA status of POS invoices."
+    fields:
+      custom_zatca_status: "Same values as Sales Invoice."
+      custom_uuid: "UUID sent to ZATCA."
+      custom_zatca_pos_name: "Link to ZATCA Multiple Setting (POS machine)."
+      custom_zatca_tax_category: "Same options as Sales Invoice."
+      custom_exemption_reason_code: "ZATCA exemption code."
+      custom_zatca_full_response: "Raw response from ZATCA."
+      custom_company_country: "Company's country."
+    notes:
+      - "POS Invoice has no custom_b2c field; B2C is decided from the customer."
+
+  Sales Invoice Item:
+    fields:
+      custom_exemption_reason_code: "Copied from the Item Tax Template."
+      custom_tax_exemption_reason: "Copied from the Item Tax Template."
+
+  Purchase Invoice:
+    use_for: "ZATCA classification of purchases for the VAT report. Purchase invoices are not sent to ZATCA."
+    fields:
+      custom_zatca_tax_category: "Standard | Zero Rated | Exempted | Services outside scope of tax / Not subject to VAT. Default Standard."
+      custom_exemption_reason_code: "ZATCA exemption code."
+      custom_zatca_import_invoice: "1 = import."
+      custom_zatca_self_billed_invoice: "1 = self-billed."
+      custom_zatca_summary_invoice: "1 = summary invoice."
+      custom_zatca_3rd_party_invoice: "1 = third-party invoice."
+      custom_zatca_nominal_invoice: "1 = nominal invoice."
+      custom_company_country: "Company's country."
+
+  Customer:
+    fields:
+      custom_b2c: "1 = this customer receives simplified (B2C) invoices."
+      zatca_customer_name_in_arabic: "Customer name in Arabic."
+      custom_buyer_id_type: "ID type for ZATCA: CRN, TIN, MOM, MLS, 700, SAG, NAT, GCC, IQA, PAS, OTH. Default CRN."
+      custom_buyer_id: "ID number matching the ID type."
+
+  Company:
+    use_for: "ZATCA settings per company. Mostly configuration; see never_send for secrets."
+    fields:
+      custom_zatca_invoice_enabled: "1 = ZATCA integration is on for this company."
+      custom_phase_1_or_2: "Phase-1 | Phase-2."
+      custom_select: "Environment: Simulation | Sandbox | Production."
+      custom_send_invoice_to_zatca: "B2C submission method: Live | Batches | Background. B2B is always Live."
+      custom_start_time: "Background submission window, start."
+      custom_end_time: "Background submission window, end."
+      custom_start_time_session: "Second background window, start."
+      custom_end_time_session: "Second background window, end."
+      custom_submit_or_not: "Background job may submit draft B2C/POS invoices and send them."
+      custom_costcenter: "1 = cost centers are treated as branches, with their own registration number and address."
+      custom__company_name_in_arabic__: "Company name in Arabic."
+      custom_registration_type: "CRN, MOM, MLS, 700, SAG, OTH."
+      custom_company_registration: "Registration number."
+      custom_auto_create_pdfa3: "1 = create a PDF/A-3 with the XML embedded."
+      custom_zatca_offline_machines: "Child table of ZATCA Multiple Setting records (POS / offline devices)."
+
+  Cost Center:
+    fields:
+      custom_zatca__registration_type: "Branch registration type."
+      custom_zatca__registration_number: "Branch registration number."
+      custom_zatca_branch_address: "Branch address (Link to Address)."
+
+  Item Tax Template:
+    fields:
+      custom_zatca_tax_category: "ZATCA tax category for items using this template."
+      custom_exemption_reason_code: "ZATCA exemption code."
+      custom_tax_exemption_reason: "Exemption reason text. Default 'Not subject to VAT'."
+
+  Address:
+    fields:
+      custom_building_number: "Building number, required by ZATCA in addresses."
+
+  Account:
+    fields:
+      custom_zatca_account_type: "Input Tax | Output Tax | Both."
+      custom_tax_locker__adjustment_tax: "Linked adjustment tax account."
+
+# ---------------------------------------------------------------------------
+# 4. The app's own doctypes
+# ---------------------------------------------------------------------------
+app_doctypes:
+  ZATCA ERPGulf Success Log:
+    use_for: "One row per invoice accepted by ZATCA: invoice_number, uuid, time, zatca_response."
+    not_for: "Counting accepted invoices (use Sales Invoice.custom_zatca_status)."
+    permissions: "System Manager only."
+  ZATCA ERPGulf Event Log:
+    use_for: "Errors and events: title, invoice_number, time, api_response."
+    permissions: "System Manager only."
+  ZATCA Multiple Setting:
+    use_for: "One record per POS machine or offline device with its own certificate. Linked from invoices by custom_zatca_pos_name."
+    permissions: "System Manager only. Contains secrets."
+  Zatca ERPgulf Setting:
+    use_for: "Legacy single settings page, kept for backward compatibility. Current settings are on Company."
+    permissions: "System Manager only. Contains secrets."
+  Zatca POS table:
+    use_for: "Child table on Company listing ZATCA Multiple Setting records."
+
+# ---------------------------------------------------------------------------
+# 5. Never send to the AI, never return from a tool
+# ---------------------------------------------------------------------------
+never_send:
+  Company:
+    - custom_private_key
+    - custom_public_key
+    - custom_certificate
+    - custom_csr_config
+    - custom_csr_data
+    - custom_otp
+    - custom_pih
+    - custom_basic_auth_from_csid
+    - custom_basic_auth_from_production
+    - custom_compliance_request_id_
+  ZATCA Multiple Setting:
+    - custom_private_key
+    - custom_public_key
+    - custom_certficate
+    - custom_csr_config
+    - custom_csr_data
+    - custom_otp
+    - custom_pih
+    - custom_basic_auth_from_csid
+    - custom_final_auth_csid
+    - custom_compliance_request_id_
+  Zatca ERPgulf Setting:
+    - private_key
+    - public_key
+    - certificate
+    - csr_config
+    - csr_data
+    - otp
+    - pih
+    - basic_auth
+    - basic_auth_production
+    - compliance_request_id
+  Sales Invoice:
+    - custom_ksa_einvoicing_xml      # file content; the link may be shown to the user, not sent to the AI
+  POS Invoice:
+    - custom_ksa_einvoicing_xml
+
+# ---------------------------------------------------------------------------
+# 6. Words users say
+# ---------------------------------------------------------------------------
+words:
+  "zatca status, e-invoice status, حالة الزكاة":            "Sales Invoice.custom_zatca_status"
+  "cleared, clearance, تم الاعتماد":                         "custom_zatca_status = CLEARED"
+  "reported, تم الإبلاغ":                                    "custom_zatca_status = REPORTED"
+  "sent to zatca, accepted by zatca, submitted to zatca":   "custom_zatca_status in (REPORTED, CLEARED)"
+  "not submitted, pending zatca, not sent, failed, stuck":  "custom_zatca_status in (Not Submitted, 503 Service Unavailable)"
+  "b2b, standard invoice, tax invoice, فاتورة ضريبية":       "custom_b2c = 0"
+  "b2c, simplified invoice, فاتورة مبسطة":                   "custom_b2c = 1"
+  "credit note, return, إشعار دائن":                         "is_return = 1"
+  "output vat, sales vat, ضريبة المخرجات":                   "sum of base_total_taxes_and_charges on Sales Invoice"
+  "exempt, zero rated, out of scope":                       "custom_zatca_tax_category"
+  "pos machine, device, egs unit":                          "ZATCA Multiple Setting (custom_zatca_pos_name)"
+
+# ---------------------------------------------------------------------------
+# 7. Metrics (taken from the app's own number cards; all on Sales Invoice)
+# ---------------------------------------------------------------------------
+metrics:
+  - name: ZATCA Total Sales
+    value: sum(base_net_total)
+    fixed_filters: [[docstatus, "=", 1]]
+  - name: ZATCA B2B Sales
+    value: sum(base_net_total)
+    fixed_filters: [[docstatus, "=", 1], [custom_b2c, "=", 0]]
+  - name: ZATCA B2C Sales
+    value: sum(base_net_total)
+    fixed_filters: [[docstatus, "=", 1], [custom_b2c, "=", 1]]
+  - name: Sales Reported to ZATCA
+    value: sum(base_net_total)
+    fixed_filters: [[docstatus, "=", 1], [custom_zatca_status, "in", [CLEARED, REPORTED]]]
+  - name: Output VAT
+    value: sum(base_total_taxes_and_charges)
+    fixed_filters: [[docstatus, "=", 1]]
+  - name: B2B VAT
+    value: sum(base_total_taxes_and_charges)
+    fixed_filters: [[docstatus, "=", 1], [custom_b2c, "=", 0]]
+  - name: B2C VAT
+    value: sum(base_total_taxes_and_charges)
+    fixed_filters: [[docstatus, "=", 1], [custom_b2c, "=", 1]]
+  - name: VAT Reported to ZATCA
+    value: sum(base_total_taxes_and_charges)
+    fixed_filters: [[docstatus, "=", 1], [custom_zatca_status, "in", [CLEARED, REPORTED]]]
+  - name: Invoices Cleared
+    value: count
+    fixed_filters: [[custom_zatca_status, "=", CLEARED]]
+  - name: Invoices Reported
+    value: count
+    fixed_filters: [[custom_zatca_status, "=", REPORTED]]
+  - name: Invoices Not Submitted to ZATCA
+    value: count
+    fixed_filters: [[docstatus, "=", 1], [custom_zatca_status, "=", "Not Submitted"], [custom_company_country, "=", "Saudi Arabia"]]
+  - name: Invoices with ZATCA 503
+    value: count
+    fixed_filters: [[custom_zatca_status, "=", "503 Service Unavailable"]]
+metric_defaults:
+  source: Sales Invoice
+  date_field: posting_date
+  dimensions: [company, customer, custom_zatca_status, custom_b2c, custom_zatca_tax_category, custom_exemption_reason_code, is_return, cost_center, custom_zatca_pos_name]
+
+# ---------------------------------------------------------------------------
+# 8. Reports (all are Script Reports that read with frappe.db.sql)
+# ---------------------------------------------------------------------------
+reports:
+  - report: Zatca Status Report
+    use_for: "List of sales invoices with their ZATCA status for a company and date range."
+    roles: [Accounts Manager, Accounts User, Sales User]
+    filters:
+      company: {type: Link, options: Company, required: true}
+      dt_from: {type: Date}
+      dt_to: {type: Date}
+      status: {type: Select, options: [Reported, Cleared, 503 Service Unavailable, Intra-company transfer, Not Submitted]}
+    columns: [name, posting_date, customer_name, grand_total, custom_zatca_status]
+    permission_reviewed: false
+  - report: VAT Report ZATCA on Sales & Purchase
+    use_for: "VAT return figures by category for sales and purchases: amount, adjustment, VAT amount (SAR)."
+    roles: [Accounts Manager, Accounts User]
+    filters:
+      company: {type: Link, options: Company}
+      from_date: {type: Date}
+      to_date: {type: Date}
+    columns: [Category, Amount (SAR), Adjustment (SAR), VAT Amount (SAR)]
+    permission_reviewed: false
+  - report: ZATCA Sales Invoices with warnings
+    use_for: "Sales invoices that ZATCA accepted with warnings: warning code and message."
+    roles: [Accounts Manager, Accounts User]
+    filters:
+      company: {type: Link, options: Company}
+      from_date: {type: Date}
+      to_date: {type: Date}
+    columns: [Invoice No, Company, Customer, Posting Date, ZATCA Status, Warning Code, Warning Message]
+    permission_reviewed: false
+  - report: ZATCA POS Invoices with warnings
+    use_for: "POS invoices that ZATCA accepted with warnings."
+    roles: [Accounts Manager, Accounts User]
+    filters:
+      company: {type: Link, options: Company}
+      from_date: {type: Date}
+      to_date: {type: Date}
+    columns: [POS Invoice No, Company, Customer, Posting Date, ZATCA Status, Warning Code, Warning Message]
+    permission_reviewed: false
+  - report: ZATCA Duplicate UUID Invoices
+    use_for: "Sales invoices that share the same ZATCA UUID."
+    roles: [Accounts Manager, Accounts User]
+    filters:
+      from_date: {type: Date}
+      to_date: {type: Date}
+    columns: [Sales Invoice, UUID, Posting Date, Customer, Grand Total]
+    permission_reviewed: false
+
+# ---------------------------------------------------------------------------
+# 9. Functions
+# ---------------------------------------------------------------------------
+tools: []        # the app has no read-only function suitable for registration
+
+actions_not_exposed:      # these write data and call ZATCA; not available to the AI in v3
+  - zatca_erpgulf.zatca_erpgulf.sign_invoice.resubmit_invoices
+  - zatca_erpgulf.zatca_erpgulf.pos_sign.resubmit_invoices_pos
+  - zatca_erpgulf.zatca_erpgulf.sign_invoice.zatca_background
+  - zatca_erpgulf.zatca_erpgulf.sign_invoice.zatca_call
+  - zatca_erpgulf.zatca_erpgulf.sign_invoice_first.create_csr
+  - zatca_erpgulf.zatca_erpgulf.sign_invoice_first.create_csid
+  - zatca_erpgulf.zatca_erpgulf.sign_invoice_first.production_csid
+
+# ---------------------------------------------------------------------------
+# 10. Masters for the Name Index
+# ---------------------------------------------------------------------------
+masters:
+  - doctype: ZATCA Multiple Setting
+    fields: [name]
+    roles: [pos machine, device]
+  - doctype: Customer
+    extra_fields: [zatca_customer_name_in_arabic]     # index the Arabic name too
+
+# ---------------------------------------------------------------------------
+# 11. Example questions (seed for verified examples and the eval set)
+# ---------------------------------------------------------------------------
+examples:
+  - question: "How many invoices are not submitted to ZATCA this month?"
+    tool: "get_metric(Invoices Not Submitted to ZATCA, period=this_month)"
+  - question: "Show invoices pending with ZATCA"
+    tool: "query_doctype(Sales Invoice, filters: docstatus=1, custom_zatca_status in [Not Submitted, 503 Service Unavailable], custom_company_country=Saudi Arabia)"
+  - question: "What is the ZATCA status of invoice {invoice}?"
+    tool: "query_doctype(Sales Invoice, filters: name={invoice}, fields: custom_zatca_status, custom_uuid, posting_date)"
+  - question: "Why did invoice {invoice} fail in ZATCA?"
+    tool: "query_doctype(Sales Invoice, filters: name={invoice}, fields: custom_zatca_status, custom_zatca_full_response)"
+  - question: "B2B and B2C sales {period}"
+    tool: "get_metric(ZATCA Total Sales, group_by=custom_b2c, period={period})"
+  - question: "VAT reported to ZATCA {period}"
+    tool: "get_metric(VAT Reported to ZATCA, period={period})"
+  - question: "Output VAT by month this year"
+    tool: "get_metric(Output VAT, group_by=month, period=this_year)"
+  - question: "Invoices cleared for {customer} {period}"
+    tool: "query_doctype(Sales Invoice, filters: customer={customer}, custom_zatca_status=CLEARED, posting_date in {period})"
+  - question: "Which invoices had ZATCA warnings {period}?"
+    tool: "run_report(ZATCA Sales Invoices with warnings, from_date, to_date)"
+  - question: "Sales by ZATCA tax category {period}"
+    tool: "get_metric(ZATCA Total Sales, group_by=custom_zatca_tax_category, period={period})"
+  - question: "Credit notes sent to ZATCA {period}"
+    tool: "query_doctype(Sales Invoice, filters: is_return=1, docstatus=1, custom_zatca_status in [REPORTED, CLEARED], posting_date in {period})"
+  - question: "VAT return figures for {period}"
+    tool: "run_report(VAT Report ZATCA on Sales & Purchase, company, from_date, to_date)"
+  - question: "كم فاتورة لم ترسل إلى الزكاة هذا الشهر؟"
+    tool: "get_metric(Invoices Not Submitted to ZATCA, period=this_month)"
+
+# ---------------------------------------------------------------------------
+# 12. For the reviewer
+# ---------------------------------------------------------------------------
+review_notes:
+  - "All five reports read with frappe.db.sql and apply no user-level restrictions; company is optional in four of them. Review each before setting permission_reviewed to true, or keep them off the approved list."
+  - "Meaning of REPORTED (B2C, reporting) and CLEARED (B2B, clearance) follows ZATCA's terms and the code paths; please confirm."
+  - "'Not Submitted' is both the default and the value written after a failed attempt. If users need to tell 'never sent' from 'failed', the pack should point to the Event Log or the full response."
+  - "The number cards for Cleared, Reported and 503 do not filter docstatus = 1; the metrics above copy them exactly. Decide whether to add docstatus = 1."
+  - "The number cards use base_total_taxes_and_charges for VAT; the monthly dashboard charts use total_taxes_and_charges (transaction currency). The metrics above use the base field. Confirm."
+  - "The Zatca Status Report filter offers 'Reported' and 'Cleared' in mixed case, while the code stores REPORTED and CLEARED."
+  - "POS Invoice has no custom_b2c field, so B2B/B2C metrics cover Sales Invoice only. Decide whether POS metrics are needed."
+  - "Log doctypes are readable by System Manager only, so most users will get no rows from them. That is probably intended."
+  - "Confirm the full option list for custom_exemption_reason_code and custom_validation_type from the site (get_meta); they are long and not copied here."
+  - "Arabic terms under 'words' are suggestions; an Arabic-speaking consultant should confirm the wording clients use."
