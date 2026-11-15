@@ -37,19 +37,48 @@ actions_not_exposed:
 
 ## Masters
 
-If your app adds records that users refer to by name (units, vehicles, machines, properties), list them so changAI can find them despite typos.
+A master is any record users refer to by name: a unit, a vehicle, a machine, a property. List each one so changAI can find it despite typos, and knows which documents it filters.
 
 ```yaml
 masters:
+  - doctype: Property Unit
+    title_field: unit_name                    # the readable name shown to the user
+    fields: [unit_name, unit_no]              # what to index for lookup
+    roles: [unit, flat, apartment, shop]      # words users use for this kind of record
+    parent: {doctype: Building, field: building}   # "units in Tower B"
+    active_filter: [[disabled, "=", 0]]
+    linked_from:                              # documents that point to this master
+      - {doctype: Lease, field: unit}
+      - {doctype: Maintenance Request, field: unit}
+
   - doctype: Location
+    title_field: location_name
     fields: [location_name]
-    roles: [unit, tower, floor, building]     # words users use for this kind of record
+    roles: [building, tower, floor]
     tree: true                                # a parent includes its children
+
   - doctype: Customer
     extra_fields: [zatca_customer_name_in_arabic]   # also index this name field
 ```
 
-List only name-like fields. Never list fields from `never_send`, phone numbers or addresses.
+| Key | Purpose | Required |
+| --- | --- | --- |
+| `doctype` | The master's doctype | Yes |
+| `fields` | Name-like fields to index. Codes (unit numbers, plate numbers) are matched exactly | Yes, unless only `extra_fields` |
+| `title_field` | The readable name, when the document name is a code such as `UNIT-00123` | Recommended |
+| `roles` | Everyday words for this kind of record, in every language users type | Recommended |
+| `linked_from` | Documents that point to this master, and through which field. Lets changAI filter those documents by it | Recommended |
+| `parent` | The doctype and field a record belongs to, so a parent can stand for its children | If records nest |
+| `tree` | `true` for tree doctypes; a node includes its descendants | If a tree |
+| `active_filter` | Which records count as current | Optional |
+| `extra_fields` | Extra name fields your app adds to a master that is already indexed (for example an Arabic name on Customer) | Optional |
+
+Rules:
+
+- List only name-like fields. Never list fields from `never_send`, phone numbers, addresses or ID numbers.
+- A fixed list of values (a Select field such as unit type) is not a master. Describe it in the field notes and under `words`.
+- For very large masters, such as serial numbers, index only the code field.
+- Records stay in your app's own tables. changAI stores only words and a pointer to each record, in its own index.
 
 ## Examples
 

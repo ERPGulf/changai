@@ -73,8 +73,12 @@ tools: []
 
 masters:
   - doctype: Vehicle
+    title_field: plate_number
     fields: [plate_number, model]
     roles: [vehicle, truck, car]
+    linked_from:
+      - {doctype: Trip, field: vehicle}
+      - {doctype: Service Record, field: vehicle}
 
 examples:
   - question: "How many trips are in transit?"

@@ -37,6 +37,19 @@ flow:
 
 applies_when: "Company country is Saudi Arabia (custom_company_country = 'Saudi Arabia') and Company.custom_zatca_invoice_enabled = 1."
 
+# Topics: the menu the AI sees. It asks for a topic by name when a question needs it.
+topics:
+  status values:     [status_field]
+  invoice types:     [doctypes.Sales Invoice.custom_b2c, doctypes.Customer.custom_b2c, doctypes.POS Invoice]
+  tax categories:    [doctypes.Sales Invoice.custom_zatca_tax_category, doctypes.Sales Invoice.custom_exemption_reason_code, doctypes.Item Tax Template]
+  credit notes:      [doctypes.Sales Invoice.custom_credit_note_reasoninstruction_note, doctypes.Sales Invoice.custom_return_against_for_zatca]
+  purchases:         [doctypes.Purchase Invoice]
+  customer details:  [doctypes.Customer, doctypes.Address]
+  company settings:  [doctypes.Company, doctypes.Cost Center]
+  logs:              [app_doctypes]
+  pos machines:      [app_doctypes.ZATCA Multiple Setting, doctypes.Sales Invoice.custom_zatca_pos_name]
+  flow:              [flow, applies_when]
+
 # ---------------------------------------------------------------------------
 # 2. Status values (the field is plain Data; these values come from the code)
 # ---------------------------------------------------------------------------
@@ -361,8 +374,12 @@ actions_not_exposed:      # these write data and call ZATCA; not available to th
 # ---------------------------------------------------------------------------
 masters:
   - doctype: ZATCA Multiple Setting
+    title_field: name
     fields: [name]
-    roles: [pos machine, device]
+    roles: [pos machine, device, egs unit]
+    linked_from:
+      - {doctype: Sales Invoice, field: custom_zatca_pos_name}
+      - {doctype: POS Invoice, field: custom_zatca_pos_name}
   - doctype: Customer
     extra_fields: [zatca_customer_name_in_arabic]     # index the Arabic name too
 

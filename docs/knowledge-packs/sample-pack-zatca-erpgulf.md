@@ -8,6 +8,7 @@ The file: [`examples/zatca_erpgulf_knowledge_pack.yaml`](examples/zatca_erpgulf_
 
 | Section | Content |
 | --- | --- |
+| `topics` | 10 topics, from status values to POS machines |
 | `status_field` | Six status values with meanings and two groups |
 | `doctypes` | Notes on fields added to 10 standard doctypes |
 | `app_doctypes` | The app's 5 doctypes |
