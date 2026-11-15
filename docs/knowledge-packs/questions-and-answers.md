@@ -170,9 +170,105 @@ Some questions should be refused, and some need a question back. Writing these d
 
 Include at least one `refuse` example for each doctype that appears in `never_send`.
 
+## Using Claude to write them
+
+Claude can draft most of this section for you in a few minutes. It is good at turning a pack into well-formed examples, rewording questions, and translating. It cannot know which words your clients really use, so the result is a first draft for you to correct.
+
+**What Claude needs from you.** Claude does not know the knowledge pack format; it is new. Give it these three things:
+
+| Give Claude | Where to get it | Why |
+| --- | --- | --- |
+| The [format reference](format-reference.md) and one sample pack | This folder, and `examples/` | So it follows the format instead of inventing one |
+| Your app's code | Your own repository | So every field, status and report it names is real |
+| Your knowledge pack | `changai/knowledge_pack.yaml` in your app | So the examples use the metrics, reports and values your pack defines |
+
+**Write and review the rest of the pack first.** The examples are built from the pack, so its metrics, reports, field notes and status values must exist and be correct before you start. If you do not have a pack yet, follow [Building your pack with Claude](using-claude.md), which covers the pack and then these same steps.
+
+Work either in Claude Code inside your app's repository, where it can read the pack and the code directly, or in a chat with the format reference, a sample pack and your `knowledge_pack.yaml` attached.
+
+**Step 1: a first set from the pack**
+
+```text
+Here is my changAI knowledge pack and the guide page "Writing questions and answers".
+
+Write the `examples` section for this pack, 15 to 20 entries.
+- Cover every row of the "Which questions to write" table.
+- Use every metric and every report at least once, and every status value or group.
+- Use only metric names, report names, doctypes and field names that exist in the pack.
+  Copy stored values exactly, including upper and lower case.
+- Use slots such as {customer}, {invoice}, {period}. No real names, numbers or dates.
+- Prefer get_metric, then run_report, then a registered tool, then query_doctype.
+- Add docstatus=1 for submitted documents.
+- Add a one-line `note` where the choice of call is not obvious.
+Return YAML only.
+```
+
+**Step 2: your clients' real wording**
+
+Collect questions from support tickets, chats and demos. Remove customer names, amounts and document numbers before pasting them, or use a model running on your own hardware.
+
+```text
+Below are questions our users actually asked, one per line.
+
+For each one, find the example in my pack that answers it and add the wording
+under `also_asked`, with names and dates replaced by slots.
+If no example fits, write a new one.
+If a question cannot be answered from this pack, list it separately and say what
+is missing: a metric, a report, a field note or a word.
+
+<paste the questions>
+```
+
+The list of questions that cannot be answered is as useful as the examples: it shows what to add to the pack.
+
+**Step 3: other languages**
+
+```text
+For each example, add two natural Arabic wordings under `also_asked`, written the way
+an accountant in Saudi Arabia or the UAE would type them in a chat, not formal
+translations. Keep slots unchanged. Do not translate field names or stored values.
+```
+
+Have a native speaker read the result. Do the same for any other language your users type in.
+
+**Step 4: follow-ups, refusals and unclear questions**
+
+```text
+Add to the examples:
+- three follow-up questions using `after`, each changing one thing
+  (the period, the status, or the party);
+- one `expect: refuse` example for every doctype listed under never_send;
+- two `expect: ask` examples for questions that are unclear in this app,
+  with a `reason` saying what to ask.
+```
+
+**Step 5: ask Claude to find the gaps**
+
+```text
+Review the examples against the pack. List:
+- metrics, reports, status values and topics that no example uses;
+- examples whose call does not match the question;
+- examples that use query_doctype where a metric exists;
+- any field, metric or report name that is not in the pack.
+```
+
+**Step 6: check, then fix**
+
+Run the script in the next section. If it reports problems, paste its output back to Claude and ask it to correct those entries. Then test the calls on a site, as described there.
+
+What to check yourself, whatever Claude produces:
+
+| Check | Why |
+| --- | --- |
+| Every name exists in the pack | An AI can write a plausible field or metric that is not there; the script catches this |
+| The wording is what clients say | Claude writes clear questions; users write short, informal ones |
+| Each call gives the right result on a test site | A well-formed call can still answer a different question |
+| Non-English wordings | Natural phrasing needs a native speaker |
+| No private data came in with pasted questions | Names and numbers must not end up in the pack |
+
 ## Check your examples
 
-Run this small script on your pack. It confirms that every metric, report and doctype named in an example exists in the pack.
+Run this small script on your pack. It confirms that every metric, report and doctype named in an example exists in the pack. A fuller checker, which also checks fields, topics and the never-send list, is at [`tools/check_pack.py`](tools/check_pack.py).
 
 ```python
 import re, sys, yaml

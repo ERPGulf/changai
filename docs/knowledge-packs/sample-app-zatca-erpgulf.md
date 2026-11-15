@@ -23,7 +23,7 @@ It is a useful sample because it has the three things an AI cannot work out by i
 
 The resulting draft pack has 12 metrics, 5 reports, 13 example questions and 10 notes for the reviewer. It was written from the public repository at commit `ba0a088` (26 October 2026) and is a draft until a consultant reviews it. Your installed version may differ; changAI always checks a pack against the installed app.
 
-The full file is on the [Sample pack: zatca_erpgulf](sample-pack-zatca-erpgulf.md) page.
+The full file is on the [Sample pack: zatca_erpgulf](sample-pack-zatca-erpgulf.md) page. A second sample, with two status fields and several countries, is [einvoice_erpgulf](sample-app-einvoice-erpgulf.md).
 
 [Contents](README.md) · [Next: Before you start, and file structure](getting-started.md)
 

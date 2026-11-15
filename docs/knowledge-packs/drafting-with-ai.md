@@ -1,5 +1,7 @@
 # Drafting with an AI tool
 
+> This page is the short version. For every stage with every prompt, see [Building your pack with Claude: complete walkthrough](using-claude.md). Whichever you use, give the assistant the [format reference](format-reference.md): it does not know this format otherwise.
+
 An AI coding tool with access to your repository can write most of the first draft in minutes; your job becomes checking it. This works for public and private apps: for a private app, run the tool on your own machine against the local code.
 
 A prompt that works:

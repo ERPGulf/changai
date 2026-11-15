@@ -19,7 +19,7 @@ The file: [`examples/zatca_erpgulf_knowledge_pack.yaml`](examples/zatca_erpgulf_
 | `examples` | 13 questions with the expected call |
 | `review_notes` | 10 open points for the reviewer |
 
-[Previous: A complete minimal pack](minimal-pack.md) · [Contents](README.md) · [Next: Sample pack: einvoice_erpgulf](sample-pack-einvoice-erpgulf.md)
+[Previous: A complete minimal pack](minimal-pack.md) · [Contents](README.md) · [Next: The sample app: einvoice_erpgulf](sample-app-einvoice-erpgulf.md)
 
 ---
 
