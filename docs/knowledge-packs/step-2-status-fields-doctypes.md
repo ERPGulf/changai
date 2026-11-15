@@ -32,6 +32,29 @@ status_field:
 
 `groups` matter: users say "pending" or "sent", not the exact value. Write the value exactly as stored, including case.
 
+**More than one status field.** Some apps track two things separately. In [einvoice_erpgulf](sample-pack-einvoice-erpgulf.md), one field records whether the provider accepted the invoice and another records what the tax authority said. Use `status_fields`, a list with one entry per field, and give each a `meaning` line so the AI can tell them apart:
+
+```yaml
+status_fields:
+  - doctypes: [Sales Invoice, Purchase Invoice]
+    fieldname: custom_einvoice_status
+    meaning: "Did the provider accept the submission?"
+    default: "Not Submitted"
+    values:
+      "Not Submitted": "Not accepted by the provider: not sent, rejected, or provider unreachable."
+      "Success": "The provider accepted the invoice."
+
+  - doctypes: [Sales Invoice, Purchase Invoice]
+    fieldname: custom_reporting_status
+    meaning: "What did the tax authority say about the invoice?"
+    values:
+      "pending": "Sent; waiting for the tax authority's answer."
+      "reported": "Accepted and recorded by the tax authority."
+      "failed": "Reporting failed."
+    groups:
+      problem: ["failed", "rejected"]
+```
+
 ## Fields you add to standard doctypes
 
 List fields from your fixtures (`custom_field.json`) or `get_meta`. For each, write one line a new team member would need.

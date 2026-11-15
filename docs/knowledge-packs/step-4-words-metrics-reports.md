@@ -40,7 +40,8 @@ metric_defaults:
 | Use company-currency fields (`base_...`) for amounts | Totals across currencies are otherwise wrong |
 | Give each metric a name a user would say | The AI chooses by name |
 | Define close variants as separate metrics (gross, net, reported) | The AI must not choose the rule |
-| List `dimensions` users can group or filter by | Anything not listed is refused |
+| List `dimensions` users can group or filter by | Anything not listed is refused; a dimension that does not exist on a metric's doctype is ignored for that metric |
+| Give a metric its own `source` when it differs from `metric_defaults` | One pack can hold metrics on several doctypes, for example Sales Invoice and Purchase Invoice |
 
 ## Reports
 

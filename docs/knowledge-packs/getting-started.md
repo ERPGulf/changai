@@ -32,7 +32,7 @@ The file has a header and up to fifteen sections. Only the first four are requir
 | `overview` | Yes | What the app does, in 3 to 5 sentences | Always |
 | `flow` | Yes | How documents move, as short steps | On request |
 | `topics` | Yes | Short names for the areas the pack covers | Always (as a menu) |
-| `status_field` | If you have one | Values of a status field and what they mean | When relevant |
+| `status_field` (or `status_fields`, a list, when there are several) | If you have one | Values of a status field and what they mean | When relevant |
 | `doctypes` | If you add fields | Notes on fields you add to standard doctypes | When relevant |
 | `app_doctypes` | If you add doctypes | What each of your doctypes is for | When relevant |
 | `never_send` | If any secrets | Fields that must never leave the server | Never; enforced by the server |

@@ -1,0 +1,441 @@
+# changAI knowledge pack for einvoice_erpgulf
+# Suggested location in the app:  einvoice_erpgulf/changai/knowledge_pack.yaml
+#
+# STATUS: DRAFT. Written from the public repository; every entry needs review by a
+# consultant who knows the app before changAI may use it. Items the code did not make
+# clear are listed under "review_notes" at the end.
+
+pack_version: 1
+app: einvoice_erpgulf
+app_title: E-Invoicing for ERPNext
+source:
+  repository: https://github.com/ERPGulf/einvoice_erpgulf
+  commit: 6a4d666            # 2026-11-13
+drafted_on: 2026-11-15
+reviewed_by: null            # fill in on review
+status: Draft                # Draft | Reviewed
+
+# ---------------------------------------------------------------------------
+# 1. Overview (sent to the AI in the cached system part; keep it short)
+# ---------------------------------------------------------------------------
+overview: >
+  E-invoicing for countries where invoices go to the tax authority through a provider
+  the taxpayer chooses (a Peppol access point or accredited service provider). The
+  Company's country selects the rules: United Arab Emirates, Oman and Belgium are
+  included. When a Sales Invoice (invoice or credit note) or a Purchase Invoice
+  (self-billed) is submitted, the app sends it to the Company's provider and records two
+  statuses on the invoice: whether the provider accepted it, and what the tax authority
+  said. Supplier invoices arriving through the same channel are received as incoming
+  invoices. The app adds fields to Sales Invoice, Purchase Invoice, Customer, Supplier,
+  Company, Address, Item and Item Tax Template, plus settings and log doctypes.
+
+flow:
+  - "Company has E-Invoice Enabled ticked and a provider chosen (Company.custom_einvoice_provider). An E-Invoice Provider Settings record holds that company's credentials."
+  - "Sales Invoice or Purchase Invoice is submitted. The app sends it to the provider."
+  - "E-Invoice Status becomes 'Success' if the provider accepted it; otherwise it stays 'Not Submitted'. The provider's reference is stored in Document ID."
+  - "Reporting Status starts as 'pending' and is updated by the provider's webhook, or by a scheduler that checks pending invoices every 5 minutes (invoices from the last 7 days)."
+  - "Reporting Status ends as 'reported', 'delivered', 'rejected' or 'failed'."
+  - "Once reported, the e-invoice XML and PDF are attached to the invoice."
+  - "An invoice the provider accepted, or whose reporting is pending or reported, cannot be cancelled; a credit note (return) is issued instead. Failed, rejected or never-sent invoices can be cancelled."
+  - "Supplier invoices received through the provider appear in E-Invoice Incoming Invoice; a Purchase Invoice can be created from each."
+
+applies_when: "Company.custom_einvoice_enabled = 1, and the Company's country is one the app supports (United Arab Emirates, Oman, Belgium)."
+
+# Topics: the menu the AI sees. It asks for a topic by name when a question needs it.
+topics:
+  status values:      [status_fields]
+  cancelling:         [flow]
+  vat categories:     [doctypes.Sales Invoice.custom_vat_category, doctypes.Sales Invoice.custom_vat_exemption_reason_code, doctypes.Sales Invoice.custom_rcm_nature_code, doctypes.Item Tax Template]
+  credit notes:       [doctypes.Sales Invoice.custom_credit_note_reason_code, doctypes.Sales Invoice.custom_return_against_for_einvoice, doctypes.Sales Invoice.custom_skip_validation_for_credit_note]
+  purchases:          [doctypes.Purchase Invoice, app_doctypes.E-Invoice Incoming Invoice]
+  party details:      [doctypes.Customer, doctypes.Supplier, doctypes.Address]
+  items:              [doctypes.Item, doctypes.Sales Invoice Item]
+  company settings:   [doctypes.Company, app_doctypes.E-Invoice Provider Settings]
+  oman:               [doctypes.Sales Invoice.custom_om_transaction_type_code, doctypes.Sales Invoice.custom_om_credit_note_reason_code, doctypes.Address.custom_governorate]
+  logs:               [app_doctypes]
+  flow:               [flow, applies_when]
+
+# ---------------------------------------------------------------------------
+# 2. Status values: TWO fields, both plain Data; the values come from the code.
+#    An app with more than one status field uses status_fields (a list).
+# ---------------------------------------------------------------------------
+status_fields:
+  - doctypes: [Sales Invoice, Purchase Invoice]
+    fieldname: custom_einvoice_status
+    label: E-Invoice Status
+    meaning: "Did the provider accept the submission?"
+    default: "Not Submitted"
+    values:
+      "Not Submitted": "Not accepted by the provider: not sent yet, rejected by the provider, or the provider could not be reached."
+      "Success": "The provider accepted the invoice."
+    groups:
+      accepted_by_provider: ["Success"]
+      not_sent: ["Not Submitted"]
+    notes:
+      - "'Sent' usually means this field is Success. It does not mean the tax authority has accepted the invoice."
+      - "To find WHY a submission failed, read custom_submit_response on the invoice."
+
+  - doctypes: [Sales Invoice, Purchase Invoice]
+    fieldname: custom_reporting_status
+    label: Reporting Status
+    meaning: "What did the tax authority say about the invoice?"
+    default: null            # empty until the invoice is sent
+    values:
+      "pending": "Sent; waiting for the tax authority's answer."
+      "reported": "Accepted and recorded by the tax authority."
+      "delivered": "Delivered to the recipient through the network."
+      "rejected": "Rejected by the tax authority."
+      "failed": "Reporting failed."
+    groups:
+      reported_to_authority: ["reported"]
+      waiting: ["pending"]
+      problem: ["failed", "rejected"]
+      final: ["reported", "delivered", "rejected", "failed"]
+    notes:
+      - "Values are stored in lower case."
+      - "The latest reply from the provider is in custom_document_status_response on the invoice."
+
+# ---------------------------------------------------------------------------
+# 3. Fields added to standard doctypes
+# ---------------------------------------------------------------------------
+doctypes:
+  Sales Invoice:
+    use_for: "E-invoice status of sales invoices and credit notes; VAT category; reasons and codes sent to the tax authority."
+    fields:
+      custom_einvoice_status: "Provider result. See status_fields."
+      custom_reporting_status: "Tax authority result. See status_fields."
+      custom_document_id: "The provider's reference for this invoice. Default text 'Not Submitted' until sent. Needed for every later status check."
+      custom_document_xml: "Attached e-invoice XML (file link), filled once reported."
+      custom_document_pdf: "Attached e-invoice PDF (file link), filled once reported."
+      custom_company_country: "Company's country, copied from Company. Decides which country's rules apply."
+      custom_submit_response: "Raw reply from the provider when the invoice was sent."
+      custom_document_status_response: "Raw reply from the latest status check."
+      custom_vat_category: "S - Standard rated | Z - Zero rated | E - Exempt from tax | AE - VAT Reverse Charge | O - out of scope, and others. Default S."
+      custom_vat_exemption_reason_code: "UAE exemption reason code, used when the VAT category is not standard."
+      custom_rcm_nature_code: "UAE reverse-charge nature code (for example electronic devices, gold and diamonds)."
+      custom_invoice_transaction_type_code: "UAE transaction type flags (free trade zone, deemed supply and others)."
+      custom_frequency_billing_code_list: "Billing frequency code for recurring invoices: DLY, WKY, MTH, QTR, YRL and others."
+      custom_invoice_note: "Note text sent with the invoice. Default 'Tax Invoice'."
+      custom_credit_note_reason_code: "UAE reason code for a credit note (cancellation, amendment and others)."
+      custom_return_against_for_einvoice: "Original invoice reference for a credit note when the original is not in the system."
+      custom_skip_validation_for_credit_note: "1 = skip the check that a credit note must refer to an original invoice."
+      custom_buyer_reference: "Buyer reference (BT-10). Required for Peppol when there is no purchase order number. Used for Belgium."
+      custom_om_transaction_type_code: "Oman only. 20 characters of 0/1; all zeros = standard domestic invoice."
+      custom_om_credit_note_reason_code: "Oman only. CAN - Cancellation, VAT - VAT adjustment, VAL - Value adjustment, QTY - Quantity adjustment, and others."
+      custom_om_vat_exemption_reason_code: "Oman only. Required when VAT category is E."
+      custom_om_zero_rating_reason_code: "Oman only. Required when VAT category is Z."
+    related_standard_fields:
+      is_return: "1 = credit note."
+      docstatus: "0 draft, 1 submitted, 2 cancelled. Only submitted invoices are sent."
+      base_net_total: "Amount before VAT, company currency."
+      base_total_taxes_and_charges: "VAT amount, company currency."
+
+  Purchase Invoice:
+    use_for: "E-invoice status of self-billed purchase invoices and their credit notes. The fields mirror Sales Invoice."
+    fields:
+      custom_einvoice_status: "Provider result. See status_fields."
+      custom_reporting_status: "Tax authority result. See status_fields."
+      custom_document_id: "The provider's reference. Default text 'Not Submitted' until sent."
+      custom_document_xml: "Attached e-invoice XML."
+      custom_document_pdf: "Attached e-invoice PDF."
+      custom_submit_to_authority: "Submit to Tax Authority (tick box)."
+      custom_submit_response: "Raw reply from the provider when the invoice was sent."
+      custom_document_status_response: "Raw reply from the latest status check."
+      custom_vat_category: "Same options as Sales Invoice."
+      custom_vat_exemption_reason_code: "UAE exemption reason code."
+      custom_rcm_nature_code: "UAE reverse-charge nature code."
+      custom_invoice_transaction_type_code: "UAE transaction type flags."
+      custom_credit_note_reason_code: "UAE reason code for a credit note."
+      custom_frequency_billing_code_list: "Billing frequency code."
+      custom_invoice_note: "Note text sent with the invoice. Default 'Tax Invoice Reporting'."
+      custom_payment_means_codes: "Payment means code: 10 - Cash, 20 - Cheque, 30 - Credit transfer, and others."
+      custom_om_transaction_type_code: "Oman only. 20 characters of 0/1."
+      custom_om_credit_note_reason_code: "Oman only. Credit note reason."
+      custom_om_vat_exemption_reason_code: "Oman only. Required when VAT category is E."
+      custom_om_zero_rating_reason_code: "Oman only. Required when VAT category is Z."
+
+  Sales Invoice Item:
+    fields:
+      custom_item_type_codes: "G - Goods | S - Services | B - Both. Copied from the Item."
+      custom_hs_code_: "HS code. Copied from the Item."
+      custom_sac_code: "SAC (service) code. Copied from the Item."
+
+  Purchase Invoice Item:
+    fields:
+      custom_item_type_codes: "G - Goods | S - Services | B - Both. Copied from the Item."
+      custom_hs_code_: "HS code. Copied from the Item."
+      custom_sac_code: "SAC (service) code. Copied from the Item."
+
+  Item:
+    fields:
+      custom_item_type_codes: "G - Goods | S - Services | B - Both."
+      custom_hs_code_: "HS (customs) code for goods."
+      custom_sac_code: "SAC code for services."
+
+  Item Tax Template:
+    fields:
+      custom_vat_category: "VAT category for items using this template."
+      custom_vat_exemption_reason_code: "UAE exemption reason code."
+      custom_rcm_nature_code: "UAE reverse-charge nature code."
+      custom_om_vat_exemption_reason_code: "Oman only. Exemption reason."
+      custom_om_zero_rating_reason_code: "Oman only. Zero-rating reason."
+
+  Customer:
+    fields:
+      custom_is_b2c_customer: "1 = consumer (B2C) customer."
+      custom_peppol_id: "The customer's Peppol participant ID, used to route the invoice."
+      custom_legal_registration_identifier_type: "Commercial/Trade license | Emirates ID | Passport | Cabinet decision."
+      custom_legal_registration_authority: "Authority that issued the registration."
+      custom_fz_beneficiary_id: "Free zone beneficiary ID."
+
+  Supplier:
+    fields:
+      custom_peppol_id: "The supplier's Peppol participant ID."
+      custom_legal_registration_identifier_type: "Commercial/Trade license | Emirates ID | Passport | Cabinet decision."
+      custom_legal_registration_authority: "Authority that issued the registration."
+      custom_fz_beneficiary_id: "Free zone beneficiary ID."
+      custom_marmin_profile_id: "Only when the supplier is also on the Marmin provider; blank otherwise."
+
+  Company:
+    use_for: "Whether e-invoicing is on for a company, and which provider it uses."
+    fields:
+      custom_einvoice_enabled: "1 = e-invoicing is on for this company."
+      custom_einvoice_provider: "The provider chosen for this company (labelled Accredited Service Provider, or Peppol Access Point for Belgium)."
+      custom_legal_registration_identifier_type: "Commercial/Trade license | Emirates ID | Passport | Cabinet decision."
+      custom_legal_registration_authority: "Authority that issued the registration."
+      custom_trade_license_number: "The company's legal registration number."
+      custom_allow_creditnote_without_original_invoice_in_the_system: "1 = credit notes may be sent without the original invoice being in the system."
+
+  Address:
+    fields:
+      emirate: "UAE emirate: Abu Dhabi, Ajman, Dubai, Fujairah, Ras Al Khaimah, Sharjah, Umm Al Quwain."
+      custom_governorate: "Oman only. Governorate; required on Omani addresses."
+      custom_om_special_zone: "Oman only. Special or free zone code."
+
+  Mode of Payment:
+    fields:
+      custom_payment_means_codes: "Payment means code sent on the e-invoice: 10 - Cash, 20 - Cheque, 30 - Credit transfer, and others."
+
+# ---------------------------------------------------------------------------
+# 4. The app's own doctypes
+# ---------------------------------------------------------------------------
+app_doctypes:
+  E-Invoice Provider Settings:
+    use_for: "One record per company and provider: environment, TRN, Peppol participant ID, credentials, webhook details, last connection test."
+    not_for: "Invoice statuses (those are on the invoice)."
+    permissions: "System Manager only. Contains secrets."
+  E-Invoice Success Log:
+    use_for: "One row per accepted submission: document_id, invoice_number, status, reporting_status, exchange_status, submit_response."
+    not_for: "Counting sent invoices (use custom_einvoice_status on the invoice)."
+    permissions: "System Manager only."
+  E-Invoice Webhook Log:
+    use_for: "One row per webhook delivery from the provider: event_type, document_id, invoice_number, status, reporting_status, exchange_status."
+    permissions: "System Manager only."
+  E-Invoice Incoming Invoice:
+    use_for: "Supplier invoices received through the provider, with the original file. status is 'Not Submitted' until a Purchase Invoice is created from it, then 'Submitted'."
+    permissions: "System Manager only."
+
+# ---------------------------------------------------------------------------
+# 5. Never send to the AI, never return from a tool
+# ---------------------------------------------------------------------------
+never_send:
+  E-Invoice Provider Settings:
+    - client_id
+    - client_secret
+    - api_key
+    - api_secret
+    - username
+    - password
+    - certificate
+    - private_key
+    - certificate_passphrase
+    - webhook_secret
+    - webhook_uuid
+    - last_access_token
+    - last_test_response
+    - last_webhook_subscribe_response
+    - last_webhook_subscription_response
+    - last_webhook_logs_response
+    - last_participant_response
+  Customer:
+    - custom_trade_license_number      # may hold an Emirates ID or passport number
+  Supplier:
+    - custom_trade_license_number      # may hold an Emirates ID or passport number
+  Sales Invoice:
+    - custom_document_xml              # file content; the link may be shown to the user, not sent to the AI
+    - custom_document_pdf
+  Purchase Invoice:
+    - custom_document_xml
+    - custom_document_pdf
+  E-Invoice Incoming Invoice:
+    - incoming_invoice_file
+
+# ---------------------------------------------------------------------------
+# 6. Words users say
+# ---------------------------------------------------------------------------
+words:
+  "e-invoice status, einvoice status, حالة الفاتورة الإلكترونية":   "custom_einvoice_status and custom_reporting_status"
+  "reported, reported to fta, accepted by tax authority, تم الإبلاغ": "custom_reporting_status = reported"
+  "pending, waiting, in progress":                                  "custom_reporting_status = pending"
+  "failed, rejected, error, stuck":                                 "custom_reporting_status in (failed, rejected)"
+  "not submitted, not sent, unsent":                                "custom_einvoice_status = Not Submitted"
+  "sent, accepted by provider, accepted by asp":                    "custom_einvoice_status = Success"
+  "fta, tax authority, ota, الهيئة الاتحادية للضرائب":                "the tax authority (Reporting Status)"
+  "asp, provider, access point, peppol provider":                   "Company.custom_einvoice_provider"
+  "credit note, return, إشعار دائن":                                "is_return = 1"
+  "self-billed, self billing":                                      "Purchase Invoice"
+  "incoming invoice, received invoice, supplier e-invoice":         "E-Invoice Incoming Invoice"
+  "reverse charge, rcm":                                            "custom_vat_category = AE - VAT Reverse Charge; custom_rcm_nature_code"
+  "zero rated, exempt, out of scope":                               "custom_vat_category"
+  "trn, vat number":                                                "the party's tax ID (standard tax_id field)"
+
+# ---------------------------------------------------------------------------
+# 7. Metrics (taken from the app's own E-Invoice Dashboard cards)
+# ---------------------------------------------------------------------------
+metrics:
+  - name: Sales Invoices Reported
+    source: Sales Invoice
+    value: count
+    fixed_filters: [[custom_reporting_status, "=", "reported"]]
+  - name: Sales Invoices Accepted by Provider
+    source: Sales Invoice
+    value: count
+    fixed_filters: [[custom_einvoice_status, "=", "Success"]]
+  - name: Sales Invoices Failed
+    source: Sales Invoice
+    value: count
+    fixed_filters: [[custom_reporting_status, "=", "failed"]]
+  - name: Sales Invoices Not Submitted
+    source: Sales Invoice
+    value: count
+    fixed_filters: [[custom_einvoice_status, "=", "Not Submitted"]]
+  - name: Purchase Invoices Reported
+    source: Purchase Invoice
+    value: count
+    fixed_filters: [[custom_reporting_status, "=", "reported"]]
+  - name: Purchase Invoices Accepted by Provider
+    source: Purchase Invoice
+    value: count
+    fixed_filters: [[custom_einvoice_status, "=", "Success"]]
+  - name: Purchase Invoices Failed
+    source: Purchase Invoice
+    value: count
+    fixed_filters: [[custom_reporting_status, "=", "failed"]]
+  - name: Purchase Invoices Not Submitted
+    source: Purchase Invoice
+    value: count
+    fixed_filters: [[custom_einvoice_status, "=", "Not Submitted"]]
+metric_defaults:
+  date_field: posting_date
+  dimensions: [company, customer, supplier, custom_reporting_status, custom_einvoice_status, custom_vat_category, is_return, cost_center]
+
+# ---------------------------------------------------------------------------
+# 8. Reports (both are Script Reports that read with frappe.db.sql)
+# ---------------------------------------------------------------------------
+reports:
+  - report: E-Invoice Sales Status Report
+    use_for: "List of sales invoices with Reporting Status and E-Invoice Status for a date range."
+    roles: [Accounts Manager, Accounts User]
+    filters:
+      company: {type: Link, options: Company, required: true}
+      dt_from: {type: Date}
+      dt_to: {type: Date}
+      status: {type: Select, options: [reported, failed, Not Submitted, Cancelled]}
+    columns: [name, posting_date, customer_name, grand_total, custom_reporting_status, custom_einvoice_status]
+    permission_reviewed: false
+  - report: E-Invoice Purchase Status Report
+    use_for: "List of purchase invoices with Reporting Status and E-Invoice Status for a date range."
+    roles: [Accounts Manager, Accounts User, Purchase User, Auditor]
+    filters:
+      company: {type: Link, options: Company, required: true}
+      dt_from: {type: Date}
+      dt_to: {type: Date}
+      status: {type: Select, options: [reported, failed, Not Submitted, Cancelled]}
+    columns: [name, posting_date, supplier_name, grand_total, custom_reporting_status, custom_einvoice_status]
+    permission_reviewed: false
+
+# ---------------------------------------------------------------------------
+# 9. Functions
+# ---------------------------------------------------------------------------
+tools: []        # the app has no read-only function suitable for registration
+
+actions_not_exposed:      # these write data or call the provider; not available to the AI in v3
+  - einvoice_erpgulf.core.submit_sales.generate_and_send_einvoice
+  - einvoice_erpgulf.core.submit_sales.bulk_send_invoices
+  - einvoice_erpgulf.core.send_purchase.generate_and_send_einvoice
+  - einvoice_erpgulf.core.send_purchase.bulk_send_invoices
+  - einvoice_erpgulf.core.send_purchase.get_document_status
+  - einvoice_erpgulf.core.verify_token.get_document_status
+  - einvoice_erpgulf.core.verify_token.get_access_token
+  - einvoice_erpgulf.core.verify_token.verify_auth
+  - einvoice_erpgulf.core.verify_token.get_participant_details
+  - einvoice_erpgulf.core.attach.get_document_xml
+  - einvoice_erpgulf.core.attach.get_document_pdf
+  - einvoice_erpgulf.core.incoming.get_fta_incoming_invoices
+  - einvoice_erpgulf.core.incoming.create_purchase_invoice_from_fta
+  - einvoice_erpgulf.core.webhook.register_webhook
+  - einvoice_erpgulf.core.webhook.delete_webhook
+  - einvoice_erpgulf.core.setup.install_country_fields
+
+# ---------------------------------------------------------------------------
+# 10. Masters for the Name Index
+# ---------------------------------------------------------------------------
+masters:
+  - doctype: Customer
+    extra_fields: [custom_peppol_id]      # find a customer by Peppol ID (matched exactly)
+  - doctype: Supplier
+    extra_fields: [custom_peppol_id]
+
+# ---------------------------------------------------------------------------
+# 11. Example questions (seed for verified examples and the eval set)
+# ---------------------------------------------------------------------------
+examples:
+  - question: "How many sales invoices were reported {period}?"
+    tool: "get_metric(Sales Invoices Reported, period={period})"
+  - question: "Which invoices failed e-invoicing {period}?"
+    tool: "query_doctype(Sales Invoice, filters: custom_reporting_status in [failed, rejected], posting_date in {period}, fields: name, customer_name, grand_total, custom_reporting_status)"
+  - question: "Show invoices still pending with the tax authority"
+    tool: "query_doctype(Sales Invoice, filters: docstatus=1, custom_reporting_status=pending)"
+  - question: "Which submitted invoices were not sent to the provider?"
+    tool: "query_doctype(Sales Invoice, filters: docstatus=1, custom_einvoice_status=Not Submitted)"
+  - question: "What is the e-invoice status of {invoice}?"
+    tool: "query_doctype(Sales Invoice, filters: name={invoice}, fields: custom_einvoice_status, custom_reporting_status, custom_document_id, posting_date)"
+  - question: "Why did {invoice} fail?"
+    tool: "query_doctype(Sales Invoice, filters: name={invoice}, fields: custom_reporting_status, custom_submit_response, custom_document_status_response)"
+  - question: "E-invoice status of invoices for {customer} {period}"
+    tool: "query_doctype(Sales Invoice, filters: customer={customer}, docstatus=1, posting_date in {period}, fields: name, posting_date, grand_total, custom_einvoice_status, custom_reporting_status)"
+  - question: "Sales invoices by reporting status {period}"
+    tool: "query_doctype(Sales Invoice, filters: docstatus=1, posting_date in {period}, aggregate: count, group_by: custom_reporting_status)"
+  - question: "Self-billed purchase invoices reported {period}"
+    tool: "get_metric(Purchase Invoices Reported, period={period})"
+  - question: "Reverse charge invoices {period}"
+    tool: "query_doctype(Sales Invoice, filters: docstatus=1, custom_vat_category like AE%, posting_date in {period})"
+  - question: "Credit notes reported {period}"
+    tool: "query_doctype(Sales Invoice, filters: is_return=1, docstatus=1, custom_reporting_status=reported, posting_date in {period})"
+  - question: "Which incoming supplier invoices are not yet converted?"
+    tool: "query_doctype(E-Invoice Incoming Invoice, filters: status=Not Submitted, fields: title, document_id)"
+  - question: "Which provider does {company} use for e-invoicing?"
+    tool: "query_doctype(Company, filters: name={company}, fields: custom_einvoice_enabled, custom_einvoice_provider)"
+  - question: "Sales status report for {period}"
+    tool: "run_report(E-Invoice Sales Status Report, company, dt_from, dt_to)"
+  - question: "كم فاتورة لم يتم الإبلاغ عنها هذا الشهر؟"
+    tool: "query_doctype(Sales Invoice, filters: docstatus=1, custom_reporting_status != reported, posting_date in this_month, aggregate: count)"
+
+# ---------------------------------------------------------------------------
+# 12. For the reviewer
+# ---------------------------------------------------------------------------
+review_notes:
+  - "Both reports read with frappe.db.sql and apply no user-level restrictions. The Company filter is required on screen but the query does not use it, so a report run for one company lists invoices of all companies. Review before setting permission_reviewed to true."
+  - "The reports' status filter offers 'reported' and 'failed' in lower case, while the report code checks for 'Reported' and 'Failed'; the values still match through the fallback comparison. Confirm this is intended."
+  - "Meaning of 'delivered' is taken from the status name and the code's list of final statuses; confirm what it means for each provider and country."
+  - "'Not Submitted' on custom_einvoice_status covers three cases: never sent, rejected by the provider, and provider unreachable. If users need to tell them apart, point them to custom_submit_response."
+  - "Purchase Invoices created from incoming invoices have their statuses written in title case ('Reported', 'Success'), while the rest of the app writes reporting statuses in lower case. Filters by exact value may miss them."
+  - "custom_document_id defaults to the text 'Not Submitted', so 'has a document ID' must be tested as: not equal to 'Not Submitted'."
+  - "The dashboard cards do not filter docstatus = 1; the metrics above copy them exactly. Decide whether to add docstatus = 1."
+  - "The app has no amount metrics (value or VAT reported); the dashboard shows counts only. Add metrics on base_net_total and base_total_taxes_and_charges if clients ask for amounts."
+  - "custom_trade_license_number on Customer and Supplier is listed under never_send because the identifier type can be Emirates ID or Passport. If clients need trade licence numbers in answers, restrict by identifier type instead."
+  - "custom_submit_to_authority on Purchase Invoice is described by its label only; confirm what it controls."
+  - "Oman fields are installed only when an Omani company exists; on other sites they are absent and changAI will skip them."
+  - "Log and settings doctypes are readable by System Manager only, so most users get no rows from them. That is probably intended."
+  - "Long option lists (VAT exemption codes, RCM nature codes, provider names) are not copied here; changAI reads them live."
+  - "Arabic terms under 'words' are suggestions; an Arabic-speaking consultant should confirm the wording clients use."

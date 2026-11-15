@@ -98,6 +98,8 @@ examples:
 
 The calls available are `get_metric`, `run_report`, `query_doctype` and your registered tools. Cover each metric and report at least once, include a "why" question, and include questions in every language your users type.
 
+This section decides how well changAI answers, so it has its own page: [Writing questions and answers](questions-and-answers.md).
+
 ## Review notes
 
 End with what you were unsure about. A reviewer reads this first.
@@ -108,7 +110,7 @@ review_notes:
   - "All five reports read with frappe.db.sql; company is optional in four of them."
 ```
 
-[Previous: Step 4: Words, metrics and reports](step-4-words-metrics-reports.md) · [Contents](README.md) · [Next: Drafting with an AI tool](drafting-with-ai.md)
+[Previous: Step 4: Words, metrics and reports](step-4-words-metrics-reports.md) · [Contents](README.md) · [Next: Writing questions and answers](questions-and-answers.md)
 
 ---
 

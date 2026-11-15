@@ -21,11 +21,13 @@ A knowledge pack is one YAML file in your Frappe app that tells changAI what you
 | [Step 3: The never-send list](step-3-never-send.md) | Secrets that must not leave the server |
 | [Step 4: Words, metrics and reports](step-4-words-metrics-reports.md) | How users speak; business numbers; reports |
 | [Step 5: Tools, actions, masters and examples](step-5-tools-masters-examples.md) | Functions, name lookup, sample questions |
+| [Writing questions and answers](questions-and-answers.md) | How to write the `examples` section: slots, calls, coverage, follow-ups, refusals |
 | [Drafting with an AI tool](drafting-with-ai.md) | A prompt that works, and what to check |
 | [Review and upkeep](review-and-upkeep.md) | Checklist; keeping the pack current |
 | [Common mistakes](common-mistakes.md) | What goes wrong, and the fix |
 | [A complete minimal pack](minimal-pack.md) | A whole file in one view |
 | [Sample pack: zatca_erpgulf](sample-pack-zatca-erpgulf.md) | The full draft pack for the sample app |
+| [Sample pack: einvoice_erpgulf](sample-pack-einvoice-erpgulf.md) | A second real pack: two status fields, several countries, both sales and purchases |
 
 ---
 

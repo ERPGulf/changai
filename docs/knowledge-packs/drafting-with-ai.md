@@ -53,7 +53,7 @@ print("Not found in the app:", [x for x in named if x not in have] or "none")
 
 If your code is confidential, use a tool and settings your company allows for that code, or a model running on your own hardware.
 
-[Previous: Step 5: Tools, actions, masters and examples](step-5-tools-masters-examples.md) · [Contents](README.md) · [Next: Review and upkeep](review-and-upkeep.md)
+[Previous: Writing questions and answers](questions-and-answers.md) · [Contents](README.md) · [Next: Review and upkeep](review-and-upkeep.md)
 
 ---
 
