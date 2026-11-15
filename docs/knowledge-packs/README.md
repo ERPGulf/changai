@@ -12,9 +12,10 @@ A knowledge pack is one YAML file in your Frappe app that tells changAI what you
 
 ## Contents
 
+**The guide**
+
 | Page | What it covers |
 | --- | --- |
-| [The sample app: zatca_erpgulf](sample-app-zatca-erpgulf.md) | The open-source app used for every example |
 | [Before you start, and file structure](getting-started.md) | What you need; where the file goes; all sections at a glance |
 | [Step 1: Overview, flow and topics](step-1-overview-flow-topics.md) | What the AI sees first |
 | [Step 2: Status values, fields and doctypes](step-2-status-fields-doctypes.md) | Meanings that exist only in your code |
@@ -22,12 +23,25 @@ A knowledge pack is one YAML file in your Frappe app that tells changAI what you
 | [Step 4: Words, metrics and reports](step-4-words-metrics-reports.md) | How users speak; business numbers; reports |
 | [Step 5: Tools, actions, masters and examples](step-5-tools-masters-examples.md) | Functions, name lookup, sample questions |
 | [Writing questions and answers](questions-and-answers.md) | How to write the `examples` section: slots, calls, coverage, follow-ups, refusals |
-| [Drafting with an AI tool](drafting-with-ai.md) | A prompt that works, and what to check |
+| [Drafting with an AI tool](drafting-with-ai.md) | A short prompt for a first draft, and what to check |
+| [Building your pack with Claude: complete walkthrough](using-claude.md) | Every stage, with every prompt: what to give Claude, the pack, the questions and answers, checking, upkeep |
+| [Format reference](format-reference.md) | The whole format in one file, to hand to an AI assistant |
 | [Review and upkeep](review-and-upkeep.md) | Checklist; keeping the pack current |
 | [Common mistakes](common-mistakes.md) | What goes wrong, and the fix |
-| [A complete minimal pack](minimal-pack.md) | A whole file in one view |
-| [Sample pack: zatca_erpgulf](sample-pack-zatca-erpgulf.md) | The full draft pack for the sample app |
-| [Sample pack: einvoice_erpgulf](sample-pack-einvoice-erpgulf.md) | A second real pack: two status fields, several countries, both sales and purchases |
+| [A complete minimal pack](minimal-pack.md) | A whole file in one view, for a small fictional app |
+
+**Tool**
+
+[`tools/check_pack.py`](tools/check_pack.py) checks a pack against your app: valid YAML, every field exists, topics and examples refer to things the pack defines. Run it from your app's module folder: `python check_pack.py changai/knowledge_pack.yaml`.
+
+**Samples from real apps**
+
+Each sample has two pages: the app (what it contains and why it is a useful example) and the pack written for it.
+
+| Sample | The app | The pack |
+| --- | --- | --- |
+| **zatca_erpgulf**: Saudi e-invoicing. One status field, many secrets, five SQL reports. Used for the examples throughout the guide | [The sample app: zatca_erpgulf](sample-app-zatca-erpgulf.md) | [Sample pack: zatca_erpgulf](sample-pack-zatca-erpgulf.md) |
+| **einvoice_erpgulf**: e-invoicing for the UAE, Oman and Belgium. Two status fields, sales and purchases, several countries | [The sample app: einvoice_erpgulf](sample-app-einvoice-erpgulf.md) | [Sample pack: einvoice_erpgulf](sample-pack-einvoice-erpgulf.md) |
 
 ---
 
