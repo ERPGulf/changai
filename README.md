@@ -26,22 +26,74 @@ AI has changed a great deal since changAI began, and changAI is changing with it
 
 When we started, AI models knew little about ERPNext and could not be relied on to use tools. So changAI did much of the work for them: a fine-tuned search model to find the right tables, large schema descriptions in every prompt, and SQL written by the model and checked afterwards. That was the right design for its time.
 
-Today's models already know standard ERPNext well, follow instructions in Arabic as easily as in English, and can reliably choose a tool and fill in its inputs. That makes a simpler, safer and more accurate design possible. changAI v3 is that design. It is being built now on the [`version-3`](https://github.com/ERPGulf/changai/tree/version-3) branch. Everything described in the rest of this README is the current version, which stays on `main` until v3 is ready.
+Today's models already know standard ERPNext well, understand Arabic as easily as English, and can reliably decide what to fetch when given a clear set of options. That makes a simpler, safer and more accurate design possible.
+
+**The idea behind v3: the AI understands the question; your ERPNext server does everything else.** The AI no longer writes SQL. It decides what is being asked, and the server fetches the data through Frappe's own ORM, as the signed-in user.
+
+changAI v3 is being built now on the [`version-3`](https://github.com/ERPGulf/changai/tree/version-3) branch. Everything described in the rest of this README is the current version, which stays on `main` until v3 is ready.
+
+### Answers and accuracy
 
 | | Current version | changAI v3 |
 | --- | --- | --- |
-| How answers are produced | The AI writes a SQL query | The AI chooses from a set of defined tools; it never writes SQL or code |
-| Permissions | The generated query is validated through Frappe's permission layer | Every read runs through Frappe as the signed-in user, so ERPNext permissions apply by design |
+| How data is fetched | AI-generated SQL | Frappe ORM (`frappe.get_list`) and ERPNext reports; no AI-written SQL |
+| Permissions | The generated query is validated through Frappe's permission layer | Every read runs through Frappe as the signed-in user, so roles and user permissions apply by design |
 | Business numbers | Worked out by the AI for each question | Sales, receivables, stock value and other key figures defined once, and calculated the same way every time |
 | Reports | Opens the matching ERPNext report with filters applied | Also runs standard and custom reports and answers from the results |
-| Finding customers and items | Master data synced into an embedding index | A name index, updated as records change, that handles typos, sound-alike spellings, and Arabic and English names; asks when two matches are close |
-| Schema knowledge | Fine-tuned embedding model, vector indexes and generated training data | The model's own knowledge, checked against your site's live metadata; much lighter to install and maintain |
-| Custom apps | Schema sync for custom doctypes and fields | [Knowledge packs](docs/knowledge-packs/README.md): each app describes its own fields, statuses, metrics and secrets |
-| Creating, updating and deleting records | Carried out after a permission check | Always shown as a preview first; nothing changes until you confirm |
-| Your data and the AI | Retrieval can run on your server; the question and query context go to the AI provider | Privacy levels per site, including a private mode where names are replaced by placeholders and result data stays on your server, and an option to run a model on your own hardware |
+| Creating, updating and deleting | Carried out after a permission check | Always shown as a preview first; nothing changes until you confirm |
+| When the question is unclear | Best guess | Asks, and remembers your choice |
+| Follow-up questions | Reworded by the AI each time | A compact conversation record kept on your site: who and what the chat is about, the period, the last result |
+
+### Finding the right record
+
+| | Current version | changAI v3 |
+| --- | --- | --- |
+| Customers, items, employees | Master data synced into an embedding index with a button | A name index kept inside your site's database, updated automatically as records change |
+| Spelling | Close matches by embedding | Typos and sound-alike spellings: "Jhony", "Jon" and "Johnny" all find the same customer |
+| Languages | English and Arabic | English and Arabic names matched across scripts, with the same method open to other languages |
+| Several matches | One is picked | A short list to choose from, showing only records you are allowed to see |
+| Any doctype | A fixed set of master tables | Any master, including those added by custom apps |
+
+### Your data and privacy
+
+| | Current version | changAI v3 |
+| --- | --- | --- |
+| What the AI provider receives | The question, query context and results | Chosen per site, from four privacy levels |
+| Private mode | Not available | Names are replaced by placeholders before anything is sent; result tables are shown directly and never leave your server |
+| On your own hardware | Retrieval can run locally | The language model itself can run on your own server, so nothing leaves it |
+| Audit | Debug tab | A log of every outgoing request, on your server |
+
+### Custom apps
+
+| | Current version | changAI v3 |
+| --- | --- | --- |
+| Fields and doctypes from your own apps | Schema sync using an API key | Read live from your site's metadata, always current |
+| What your app means | Not known to the AI | [Knowledge packs](docs/knowledge-packs/README.md): one file per app describing its statuses, document flow, metrics, reports and the names users search by |
+| Secrets | Not declared | Each app lists the fields that must never be sent to an AI model, and the server enforces it |
+| Your app's own calculations | Not used | Existing read-only functions can be registered, so answers match what your app shows |
+
+### Simpler to install and run
+
+| | Current version | changAI v3 |
+| --- | --- | --- |
+| Embedding model | A fine-tuned model to download and keep up to date | Not needed to start; added later only where it helps, such as very large item catalogs or document search |
+| Training data | Generated per module to improve retrieval | Not needed; changAI improves from confirmed answers on your own site |
+| Setup steps | Download model, sync master data, sync schema | Install, choose a model, choose a privacy level |
 | AI models | Google Gemini recommended; other engines optional | Claude, Gemini, OpenAI or a local model, chosen per task in settings |
-| Speed | Answer shown when everything is finished | Runs in the background and streams the answer as it is written |
-| Quality | Improved through training data and feedback | A reviewed test set, in English and Arabic, run on every change |
+| Speed | Answer shown when everything is finished | Runs in the background, streams the answer as it is written, and does not slow other ERPNext users |
+| Cost | Schema and results sent with every question | Short requests, with repeated parts cached by the provider |
+
+### Quality
+
+| | Current version | changAI v3 |
+| --- | --- | --- |
+| How we test | Training data and user feedback | A reviewed test set in English and Arabic, run on every change, including permission tests |
+| Learning from use | Retraining | A thumbs-up or a consultant's correction becomes a reusable example on your site |
+| Questions it cannot answer | Attempts an answer | Says so, and logs the question so the gap can be closed |
+
+### What stays the same
+
+The chat experience inside ERPNext, English and Arabic support, voice output as an option, the MIT licence, and support for current ERPNext versions.
 
 We are publishing the design as we go. The first part available is the [Knowledge Pack guide](docs/knowledge-packs/README.md) for app developers. Feedback is welcome through [GitHub Issues](https://github.com/ERPGulf/changAI/issues) or support@erpgulf.com.
 
@@ -244,7 +296,9 @@ Natural Language    Result is returned as a human-readable answer
 
 ## Knowledge Packs for Custom Apps
 
-changAI understands standard ERPNext out of the box, but it cannot know what your own app means: which values a status field takes, how your documents flow, which numbers matter, or which fields hold secrets. A knowledge pack is a single YAML file you add to your Frappe app that tells changAI exactly that. It lists your fields and statuses in business terms, your metrics and reports, the names users search by, and the fields that must never be sent to an AI model. With a pack in place, users can ask questions about your app's data in plain language and get correct answers.
+changAI understands standard ERPNext out of the box, but it cannot know what your own app means: which values a status field takes, how your documents flow, which numbers matter, which records users search for by name, or which fields hold secrets. A knowledge pack is a single YAML file you add to your Frappe app that tells changAI exactly that. Your app needs nothing else: no extra tables and no dependency on changAI.
+
+changAI never sends the whole file to an AI model. It loads the pack into your site, shows the AI a short menu of what your app covers, and passes on only the notes a question needs. The list of secret fields is enforced by the server.
 
 Knowledge packs are part of changAI v3. The format is published now as a draft so that app developers can prepare. The guide walks through writing a pack step by step, using ERPGulf's open-source ZATCA app as a worked example, and includes two complete sample packs.
 
