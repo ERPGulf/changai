@@ -173,15 +173,18 @@ after_migrate = "changai.changai.api.v2.rebuild_jobs.mark_schema_rebuild_pending
 # Hook on document methods and events
 # Master data and schema have no doc hooks: both rebuild nightly via scheduler_events
 # (or on demand from the ChangAI Settings buttons).
-# doc_events = {
+doc_events = {
+    "Employee": {
+        "on_update": "changai.changai.api.v2.create_qr.create_qr_code",
+    },
 
-#     # "File":{"after_insert":"changai.changai.api.v2.gdoc_ai.on_file_upload"}
-# # # 	"*": {
-# # # 		"on_update": "method",
-# # # 		"on_cancel": "method",
-# # # 		"on_trash": "method"
-# # # 	}
-# }
+    # "File":{"after_insert":"changai.changai.api.v2.gdoc_ai.on_file_upload"}
+# # 	"*": {
+# # 		"on_update": "method",
+# # 		"on_cancel": "method",
+# # 		"on_trash": "method"
+# # 	}
+}
 
 # No model/FAISS warm-up at login: loading them in the web worker on every login hung
 # production sites. retrieve.py loads each one lazily on the first ChangAI call instead.

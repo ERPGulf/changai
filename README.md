@@ -91,13 +91,6 @@ changAI v3 is being built now on the [`version-3`](https://github.com/ERPGulf/ch
 | Learning from use | Retraining | A thumbs-up or a consultant's correction becomes a reusable example on your site |
 | Questions it cannot answer | Attempts an answer | Says so, and logs the question so the gap can be closed |
 
-### Documents (planned for a later phase)
-
-| | Current version | changAI v3 |
-| --- | --- | --- |
-| Scan or upload a document | Not available | A supplier invoice, delivery note or purchase order is read, matched to your suppliers and items, checked, and shown as a draft beside the original. Nothing is saved until you confirm, and it is always saved as a draft |
-| Questions about your documents | Not available | Ask what a contract, policy or guide says. changAI searches only the files you are allowed to open and answers with the source |
-
 ### What stays the same
 
 The chat experience inside ERPNext, English and Arabic support, voice output as an option, the MIT licence, and support for current ERPNext versions.
